@@ -28,7 +28,7 @@ function downloadPendingFile(file: PendingFile) {
 }
 
 export default function ChatArea() {
-  const { messages, isStreaming, sendMessage, stopChat } = useChat();
+  const { messages, isStreaming, currentSessionId, sendMessage, stopChat } = useChat();
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const pendingFiles = useChatStore((s) => s.pendingFiles);
   const removePendingFile = useChatStore((s) => s.removePendingFile);
@@ -38,6 +38,8 @@ export default function ChatArea() {
   const setIncludeToolCalls = useChatStore((s) => s.setIncludeToolCalls);
   const { uploadFile, isUploading, progress } = useFileUpload();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const config = useAuthStore((s) => s.config);
 
@@ -63,10 +65,37 @@ export default function ChatArea() {
   }, [config?.templateId]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [messages, pendingFiles]);
+
+  // Reset stickiness whenever the user switches sessions.
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [currentSessionId]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 40;
+    stickToBottomRef.current = atBottom;
+    setShowJumpToBottom(!atBottom);
+  };
+
+  const jumpToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+    setShowJumpToBottom(false);
+  };
 
   const handleSend = async (text: string, files?: File[]) => {
     if (files && files.length > 0) {
@@ -135,7 +164,7 @@ export default function ChatArea() {
         </div>
       ) : (
         <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-6 py-4 space-y-4 relative">
             {isLoadingHistory ? (
               <div className="flex items-center justify-center h-32 text-sm text-text-muted">
                 加载历史消息中...
@@ -188,6 +217,17 @@ export default function ChatArea() {
             )}
           </div>
           <div className="relative p-4 border-t border-gray-100">
+            {showJumpToBottom && (
+              <button
+                onClick={jumpToBottom}
+                className="absolute -top-5 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full bg-white border border-gray-200 shadow flex items-center justify-center text-text-muted hover:text-text transition"
+                title="回到底部"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
             <SandboxMiniFloat />
             <ChatInput
               onSend={handleSend}

@@ -6,6 +6,8 @@ import { useSandboxStore } from '../stores/sandboxStore';
 import { startChatSSE } from '../services/sse';
 import type { SSEEvent, DisplayMessage, UploadedFileInput } from '../types/api';
 
+const EMPTY_MESSAGES: DisplayMessage[] = [];
+
 function sessionNameFromText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '新会话';
@@ -64,21 +66,16 @@ function sessionNameFromMessage(text: string, files?: UploadedFileInput[]): stri
 
 export function useChat() {
   const { config, refreshAccessToken } = useAuthStore();
-  const {
-    messages,
-    currentSessionId,
-    isStreaming,
-    setSessionId,
-    addMessage,
-    appendToLastAssistant,
-    updateLastAssistant,
-    setStreaming,
-    setAbortController,
-    clearMessages,
-    addToolCallToLastAssistant,
-    updateLastToolCall,
-    finalizeAllToolCalls,
-  } = useChatStore();
+
+  const messages = useChatStore((s) =>
+    s.currentSessionId ? (s.sessionMessages[s.currentSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  );
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
+  const isStreaming = useChatStore((s) =>
+    s.currentSessionId ? !!s.isStreamingMap[s.currentSessionId] : false,
+  );
+
+  const setSessionId = useChatStore((s) => s.setSessionId);
   const upsertSession = useSessionStore((s) => s.upsertSession);
 
   const sendMessage = useCallback(
@@ -87,11 +84,13 @@ export function useChat() {
       const token = await refreshAccessToken();
       if (!token) return;
 
-      const isScheduleSession = currentSessionId?.startsWith('schedule:');
+      const store = useChatStore.getState();
+      const liveSessionId = store.currentSessionId;
+      const isScheduleSession = liveSessionId?.startsWith('schedule:');
       let contextMessages: Array<{ Role: string; Content: Array<{ Type: string; Text: string }> }> | undefined;
 
-      if (isScheduleSession) {
-        const existingMessages = useChatStore.getState().messages;
+      if (isScheduleSession && liveSessionId) {
+        const existingMessages = store.sessionMessages[liveSessionId] ?? [];
         const taskResultContent = existingMessages
           .filter((m) => m.role === 'assistant')
           .map((m) => m.content)
@@ -103,20 +102,24 @@ export function useChat() {
             Content: [{ Type: 'text', Text: taskResultContent }],
           }];
         }
+      }
 
+      const streamSessionId = isScheduleSession || !liveSessionId
+        ? `session-${Date.now()}`
+        : liveSessionId;
+
+      // Always view the session we're sending to
+      setSessionId(streamSessionId);
+
+      if (isScheduleSession) {
         const systemMsg: DisplayMessage = {
           id: `system-${Date.now()}`,
           role: 'system',
           content: '定时任务会话为只读，已为您开启新对话',
           timestamp: Date.now(),
         };
-        addMessage(systemMsg);
+        useChatStore.getState().addMessageTo(streamSessionId, systemMsg);
       }
-
-      const sessionId = isScheduleSession
-        ? `session-${Date.now()}`
-        : (currentSessionId || `session-${Date.now()}`);
-      setSessionId(sessionId);
 
       const userMsg: DisplayMessage = {
         id: `user-${Date.now()}`,
@@ -125,7 +128,7 @@ export function useChat() {
         files: files?.map((file) => ({ name: file.name, url: file.sandboxPath })),
         timestamp: Date.now(),
       };
-      addMessage(userMsg);
+      useChatStore.getState().addMessageTo(streamSessionId, userMsg);
 
       const assistantMsg: DisplayMessage = {
         id: `assistant-${Date.now()}`,
@@ -135,26 +138,37 @@ export function useChat() {
         isStreaming: true,
         timestamp: Date.now(),
       };
-      addMessage(assistantMsg);
+      useChatStore.getState().addMessageTo(streamSessionId, assistantMsg);
 
-      setStreaming(true);
+      useChatStore.getState().setStreamingFor(streamSessionId, true);
       const controller = new AbortController();
-      setAbortController(controller);
+      useChatStore.getState().setAbortControllerFor(streamSessionId, controller);
 
       const { startPolling, currentResourceUrl } = useSandboxStore.getState();
       if (!currentResourceUrl) {
-        startPolling(token, sessionId, config.templateId);
+        startPolling(token, streamSessionId, config.templateId);
       }
 
       let currentPhase: 'reasoning' | 'message' | null = null;
-      let resolvedSessionId = sessionId;
+      let activeSessionId = streamSessionId;
+      let streamingFlagged = true;
+
+      const finishStreaming = () => {
+        if (!streamingFlagged) return;
+        streamingFlagged = false;
+        const s = useChatStore.getState();
+        s.finalizeAllToolCallsOf(activeSessionId);
+        s.updateLastAssistantOf(activeSessionId, { isStreaming: false });
+        s.setStreamingFor(activeSessionId, false);
+        s.setAbortControllerFor(activeSessionId, null);
+      };
 
       const { includeReasoning, includeToolCalls } = useChatStore.getState();
 
       await startChatSSE({
         token,
         externalUserId: config.externalUserId,
-        sessionId,
+        sessionId: streamSessionId,
         input: text,
         files,
         templateId: config.templateId,
@@ -167,6 +181,7 @@ export function useChat() {
           const obj = event.Object;
           const type = event.Type;
           const status = event.Status;
+          const s = useChatStore.getState();
 
           handleFileOutput(event);
 
@@ -177,9 +192,9 @@ export function useChat() {
           if (obj === 'content' && type === 'text' && status === 'in_progress') {
             const txt = event.Text || '';
             if (currentPhase === 'reasoning') {
-              appendToLastAssistant('reasoning', txt);
+              s.appendToLastAssistantOf(activeSessionId, 'reasoning', txt);
             } else if (currentPhase === 'message') {
-              appendToLastAssistant('content', txt);
+              s.appendToLastAssistantOf(activeSessionId, 'content', txt);
             }
           }
 
@@ -188,22 +203,26 @@ export function useChat() {
               const data = event.Content?.[0] as unknown as { Data?: { name?: string; input?: string } } | undefined;
               const name = data?.Data?.name || type;
               const input = data?.Data?.input;
-              addToolCallToLastAssistant({ name, status: 'calling', input });
+              s.addToolCallTo(activeSessionId, { name, status: 'calling', input });
             } else if (status === 'completed') {
-              updateLastToolCall({ status: 'completed' });
+              s.updateLastToolCallOf(activeSessionId, { status: 'completed' });
             }
           }
 
           if (obj === 'message' && type === 'plugin_call_output' && status === 'completed') {
             const data = event.Content?.[0] as unknown as { Data?: { output?: string } } | undefined;
             if (data?.Data?.output) {
-              updateLastToolCall({ status: 'completed', output: data.Data.output });
+              s.updateLastToolCallOf(activeSessionId, { status: 'completed', output: data.Data.output });
             }
           }
 
-          if (obj === 'message' && status === 'completed' && event.SessionId) {
-            resolvedSessionId = event.SessionId;
-            setSessionId(event.SessionId);
+          if (obj === 'message' && status === 'completed' && event.SessionId && event.SessionId !== activeSessionId) {
+            s.renameSession(activeSessionId, event.SessionId);
+            activeSessionId = event.SessionId;
+          }
+
+          if (obj === 'response' && status === 'completed') {
+            finishStreaming();
           }
 
           if (obj === 'response' && status === 'failed') {
@@ -211,7 +230,8 @@ export function useChat() {
               (event as unknown as Record<string, unknown>).Error as string ||
               (event as unknown as Record<string, unknown>).Message as string ||
               JSON.stringify(event);
-            updateLastAssistant({ content: `Error: ${errText}`, isStreaming: false });
+            s.updateLastAssistantOf(activeSessionId, { content: `Error: ${errText}`, isStreaming: false });
+            finishStreaming();
           }
 
           if (obj === 'error') {
@@ -219,26 +239,26 @@ export function useChat() {
               (event as unknown as Record<string, unknown>).message as string ||
               (event as unknown as Record<string, unknown>).Message as string ||
               JSON.stringify(event);
-            updateLastAssistant({ content: `Error: ${errText}`, isStreaming: false });
+            s.updateLastAssistantOf(activeSessionId, { content: `Error: ${errText}`, isStreaming: false });
+            finishStreaming();
           }
         },
 
         onError: (err) => {
-          updateLastAssistant({
+          useChatStore.getState().updateLastAssistantOf(activeSessionId, {
             content: `Connection error: ${err.message}`,
             isStreaming: false,
           });
-          setStreaming(false);
-          setAbortController(null);
+          finishStreaming();
         },
 
         onDone: () => {
           if (!controller.signal.aborted) {
             const now = new Date().toISOString();
             upsertSession({
-              Id: resolvedSessionId,
+              Id: activeSessionId,
               Name: sessionNameFromMessage(text, files),
-              SessionId: resolvedSessionId,
+              SessionId: activeSessionId,
               UserId: config.externalUserId,
               Channel: 'web',
               CreatedAt: now,
@@ -248,43 +268,29 @@ export function useChat() {
               },
             });
           }
-          finalizeAllToolCalls();
-          updateLastAssistant({ isStreaming: false });
-          setStreaming(false);
-          setAbortController(null);
+          finishStreaming();
         },
       });
     },
-    [
-      addMessage,
-      appendToLastAssistant,
-      addToolCallToLastAssistant,
-      updateLastToolCall,
-      finalizeAllToolCalls,
-      config,
-      currentSessionId,
-      refreshAccessToken,
-      setAbortController,
-      setSessionId,
-      setStreaming,
-      upsertSession,
-      updateLastAssistant,
-    ],
+    [config, refreshAccessToken, setSessionId, upsertSession],
   );
 
   const stopChat = useCallback(() => {
-    const ctrl = useChatStore.getState().abortController;
+    const s = useChatStore.getState();
+    const id = s.currentSessionId;
+    if (!id) return;
+    const ctrl = s.abortControllers[id];
     ctrl?.abort();
-    setStreaming(false);
-    setAbortController(null);
-    updateLastAssistant({ isStreaming: false });
-  }, [setAbortController, setStreaming, updateLastAssistant]);
+    s.finalizeAllToolCallsOf(id);
+    s.updateLastAssistantOf(id, { isStreaming: false });
+    s.setStreamingFor(id, false);
+    s.setAbortControllerFor(id, null);
+  }, []);
 
   const newChat = useCallback(() => {
-    stopChat();
-    clearMessages();
+    setSessionId(null);
     useSandboxStore.getState().reset();
-  }, [clearMessages, stopChat]);
+  }, [setSessionId]);
 
   return {
     messages,

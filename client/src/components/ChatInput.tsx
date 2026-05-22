@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useChatStore } from '../stores/chatStore';
 import type { SkillItem } from '../types/api';
+
+const MAX_TEXTAREA_HEIGHT = 240;
+const MIN_TEXTAREA_HEIGHT = 22;
 
 interface ChatInputProps {
   onSend: (text: string, files?: File[]) => void;
@@ -17,7 +21,8 @@ export default function ChatInput({
   onSend, disabled, onStop, isStreaming, skills,
   includeReasoning, includeToolCalls, onToggleReasoning, onToggleToolCalls,
 }: ChatInputProps) {
-  const [text, setText] = useState('');
+  const text = useChatStore((s) => s.draftText);
+  const setText = useChatStore((s) => s.setDraftText);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [showOptions, setShowOptions] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
@@ -26,13 +31,22 @@ export default function ChatInput({
   const optionsRef = useRef<HTMLDivElement>(null);
   const skillsRef = useRef<HTMLDivElement>(null);
 
+  // Auto-grow textarea based on content height.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const next = Math.min(Math.max(el.scrollHeight, MIN_TEXTAREA_HEIGHT), MAX_TEXTAREA_HEIGHT);
+    el.style.height = `${next}px`;
+  }, [text]);
+
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && attachedFiles.length === 0) return;
     onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined);
     setText('');
     setAttachedFiles([]);
-  }, [text, attachedFiles, onSend]);
+  }, [text, attachedFiles, onSend, setText]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -66,13 +80,12 @@ export default function ChatInput({
   }, [showOptions, showSkillsMenu]);
 
   const handleSelectSkill = useCallback((skill: SkillItem) => {
-    setText((prev) => {
-      const prefix = prev.trim() ? `${prev.trim()} ` : '';
-      return `${prefix}使用${skill.SkillName}技能 `;
-    });
+    const prev = useChatStore.getState().draftText;
+    const prefix = prev.trim() ? `${prev.trim()} ` : '';
+    setText(`${prefix}使用${skill.SkillName}技能 `);
     setShowSkillsMenu(false);
     textareaRef.current?.focus();
-  }, []);
+  }, [setText]);
 
   const hasAnyOption = onToggleReasoning || onToggleToolCalls;
   const anyEnabled = includeReasoning || includeToolCalls;
@@ -114,8 +127,8 @@ export default function ChatInput({
             rows={1}
             disabled={disabled}
             className="w-full resize-none text-sm text-text placeholder:text-text-hint
-                       focus:outline-none disabled:opacity-50 bg-transparent"
-            style={{ minHeight: 22, maxHeight: 120 }}
+                       focus:outline-none disabled:opacity-50 bg-transparent overflow-y-auto"
+            style={{ minHeight: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
           />
         </div>
 

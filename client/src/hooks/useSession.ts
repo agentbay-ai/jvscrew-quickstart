@@ -31,7 +31,7 @@ export async function loadSessionsForConfig(
 export function useSession() {
   const { config, refreshAccessToken } = useAuthStore();
   const { setSessions, setLoading, removeSession } = useSessionStore();
-  const { setSessionId, setMessages, setLoadingHistory } = useChatStore();
+  const { setSessionId, setMessagesTo, setLoadingHistory, removeSessionMessages } = useChatStore();
   const loadRequestId = useRef(0);
 
   const refreshSessions = useCallback(async (options: RefreshSessionsOptions = {}) => {
@@ -62,7 +62,7 @@ export function useSession() {
         const session = useSessionStore.getState().sessions.find((s) => s.SessionId === sessionId);
         const payload = (session?.Meta as Record<string, unknown>)?.resultPayload as string | undefined;
         if (payload) {
-          setMessages([{
+          setMessagesTo(sessionId, [{
             id: `task-result-${sessionId}-${Date.now()}`,
             role: 'assistant',
             content: payload,
@@ -76,7 +76,16 @@ export function useSession() {
 
       const requestId = ++loadRequestId.current;
       setSessionId(sessionId);
-      setMessages([]);
+
+      // If we already have messages cached for this session (e.g. it's streaming),
+      // skip the loading state and reuse what's there.
+      const cached = useChatStore.getState().sessionMessages[sessionId];
+      const isStreamingHere = !!useChatStore.getState().isStreamingMap[sessionId];
+      if (cached && (cached.length > 0 || isStreamingHere)) {
+        setLoadingHistory(false);
+        return;
+      }
+
       setLoadingHistory(true);
 
       const token = await refreshAccessToken();
@@ -93,6 +102,8 @@ export function useSession() {
           config.templateId,
         );
         if (requestId !== loadRequestId.current) return;
+        // Don't overwrite if a stream began on this session while we were loading
+        if (useChatStore.getState().isStreamingMap[sessionId]) return;
         const msgs: DisplayMessage[] = history
           .filter((m) => m.Type === 'message' && (m.Role === 'user' || m.Role === 'assistant'))
           .map((m) => ({
@@ -102,14 +113,14 @@ export function useSession() {
             timestamp: Date.now(),
           }))
           .filter((m) => m.content.trim() !== '');
-        setMessages(msgs);
+        setMessagesTo(sessionId, msgs);
       } catch {
         // silently fail
       } finally {
         if (requestId === loadRequestId.current) setLoadingHistory(false);
       }
     },
-    [config, refreshAccessToken, setMessages, setSessionId, setLoadingHistory],
+    [config, refreshAccessToken, setMessagesTo, setSessionId, setLoadingHistory],
   );
 
   const removeChat = useCallback(
@@ -120,9 +131,10 @@ export function useSession() {
       const ok = await deleteSession(token, sessionId, config.templateId);
       if (ok) {
         removeSession(sessionId);
+        removeSessionMessages(sessionId);
       }
     },
-    [config, refreshAccessToken, removeSession],
+    [config, refreshAccessToken, removeSession, removeSessionMessages],
   );
 
   const stopChat = useCallback(
