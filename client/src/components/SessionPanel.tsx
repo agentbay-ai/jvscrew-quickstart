@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useChatStore } from '../stores/chatStore';
@@ -19,6 +19,11 @@ function isScheduledTaskSession(sessionId: string): boolean {
 export default function SessionPanel({ onNewChat, onOpenTasks, onOpenFiles }: SessionPanelProps) {
   const { config, selectedExpert } = useAuthStore();
   const { sessions, isLoading } = useSessionStore();
+  const sortedSessions = useMemo(() => {
+    const ts = (s: typeof sessions[number]) =>
+      new Date(s.UpdatedAt || s.CreatedAt || 0).getTime();
+    return [...sessions].sort((a, b) => ts(b) - ts(a));
+  }, [sessions]);
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const { refreshSessions, loadHistory, removeChat } = useSession();
   const [contextMenu, setContextMenu] = useState<string | null>(null);
@@ -128,10 +133,10 @@ export default function SessionPanel({ onNewChat, onOpenTasks, onOpenFiles }: Se
             {isLoading && (
               <div className="text-xs text-text-hint text-center py-4">Loading...</div>
             )}
-            {!isLoading && sessions.length === 0 && (
+            {!isLoading && sortedSessions.length === 0 && (
               <div className="text-xs text-text-hint text-center py-4">暂无对话</div>
             )}
-            {sessions.map((session) => (
+            {sortedSessions.map((session) => (
               <div key={session.SessionId} className="relative group">
                 <div
                   className={`w-full text-left px-2 py-2 rounded-xl text-xs transition truncate flex items-center justify-between
