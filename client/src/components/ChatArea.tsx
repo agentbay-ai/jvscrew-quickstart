@@ -193,7 +193,7 @@ export default function ChatArea() {
         </div>
       ) : (
         <>
-          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-6 py-4 space-y-4 relative">
+          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto scrollbar-transparent px-6 py-4 space-y-4 relative">
             {isLoadingHistory ? (
               <div className="flex items-center justify-center h-32 text-sm text-text-muted">
                 加载历史消息中...

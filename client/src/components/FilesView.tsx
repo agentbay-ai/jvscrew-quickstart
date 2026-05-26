@@ -535,31 +535,22 @@ export default function FilesView() {
               );
             })}
 
-            {/* Sync / more button */}
+          </div>
+
+          {/* Refresh + reset */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleSync}
               disabled={isSyncing}
-              className="w-[52px] h-[52px] rounded-full border border-[#D5D8E6] bg-white flex items-center justify-center shrink-0
+              className="w-[52px] h-[52px] rounded-xl border border-[#D5D8E6] bg-white flex items-center justify-center shrink-0
                 hover:border-gray-400 transition disabled:opacity-50"
               title={isSyncing ? '同步中...' : '刷新同步'}
             >
-              {isSyncing ? (
-                <svg className="w-5 h-5 text-text-hint animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5 text-[#00000066]" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="5" cy="12" r="2" />
-                  <circle cx="12" cy="12" r="2" />
-                  <circle cx="19" cy="12" r="2" />
-                </svg>
-              )}
+              <svg className={`w-5 h-5 text-[#00000066] ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
             </button>
-          </div>
-
-          {/* Storage stats + reset */}
-          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleClearWorkspace}
               disabled={isClearing || !config}
@@ -574,11 +565,8 @@ export default function FilesView() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
               </svg>
-              {isClearing ? '重置中...' : '重置数据'}
+              {isClearing ? '重置中...' : '重置'}
             </button>
-            <div className="flex items-center rounded-xl border border-[#EAEBF2] bg-white px-4 h-[52px]">
-              <span className="text-xs text-black/80">总容量 <span className="font-medium text-black">50 GB</span></span>
-            </div>
           </div>
         </div>
 
