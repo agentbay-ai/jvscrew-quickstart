@@ -28,3 +28,19 @@ export interface SyncResponse {
   Success: boolean;
   SyncStatus: 'completed' | 'no_active_session';
 }
+
+export interface ClearedWorkspace {
+  TemplateId: string;
+  Status: 'cleared' | 'failed';
+  Error?: string | null;
+}
+
+export interface ClearWorkspaceResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  ExternalUserId: string;
+  ClearedCount: number;
+  FailedCount: number;
+  Workspaces: ClearedWorkspace[];
+}

@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { SkillItem } from '../types/api';
+import EnvVarsPopover from './EnvVarsPopover';
+import WechatBindPopover from './WechatBindPopover';
 
 const MAX_TEXTAREA_HEIGHT = 240;
 const MIN_TEXTAREA_HEIGHT = 22;
@@ -26,10 +28,14 @@ export default function ChatInput({
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [showOptions, setShowOptions] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
+  const [showEnvVars, setShowEnvVars] = useState(false);
+  const [showWechat, setShowWechat] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const skillsRef = useRef<HTMLDivElement>(null);
+  const envVarsRef = useRef<HTMLDivElement>(null);
+  const wechatRef = useRef<HTMLDivElement>(null);
 
   // Auto-grow textarea based on content height.
   useEffect(() => {
@@ -66,7 +72,7 @@ export default function ChatInput({
   };
 
   useEffect(() => {
-    if (!showOptions && !showSkillsMenu) return;
+    if (!showOptions && !showSkillsMenu && !showEnvVars && !showWechat) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (showOptions && optionsRef.current && !optionsRef.current.contains(e.target as Node)) {
         setShowOptions(false);
@@ -74,10 +80,16 @@ export default function ChatInput({
       if (showSkillsMenu && skillsRef.current && !skillsRef.current.contains(e.target as Node)) {
         setShowSkillsMenu(false);
       }
+      if (showEnvVars && envVarsRef.current && !envVarsRef.current.contains(e.target as Node)) {
+        setShowEnvVars(false);
+      }
+      if (showWechat && wechatRef.current && !wechatRef.current.contains(e.target as Node)) {
+        setShowWechat(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showOptions, showSkillsMenu]);
+  }, [showOptions, showSkillsMenu, showEnvVars, showWechat]);
 
   const handleSelectSkill = useCallback((skill: SkillItem) => {
     const prev = useChatStore.getState().draftText;
@@ -152,6 +164,47 @@ export default function ChatInput({
                   d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
             </button>
+
+            <div className="relative" ref={envVarsRef}>
+              <button
+                onClick={() => setShowEnvVars(!showEnvVars)}
+                className={`p-1.5 rounded-lg transition ${
+                  showEnvVars
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`}
+                title="环境变量"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              {showEnvVars && (
+                <EnvVarsPopover onClose={() => setShowEnvVars(false)} />
+              )}
+            </div>
+
+            <div className="relative" ref={wechatRef}>
+              <button
+                onClick={() => setShowWechat(!showWechat)}
+                className={`p-1.5 rounded-lg transition ${
+                  showWechat
+                    ? 'text-emerald-600 bg-emerald-50'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`}
+                title="绑定微信"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 7a4 4 0 014-4h6a4 4 0 014 4v4a4 4 0 01-4 4h-2l-3 3v-3H7a4 4 0 01-4-4V7z" />
+                  <circle cx="8.5" cy="8.5" r="0.75" fill="currentColor" />
+                  <circle cx="12" cy="8.5" r="0.75" fill="currentColor" />
+                </svg>
+              </button>
+              {showWechat && (
+                <WechatBindPopover onClose={() => setShowWechat(false)} />
+              )}
+            </div>
             {skills && skills.length > 0 && (
               <div className="relative" ref={skillsRef}>
                 <button

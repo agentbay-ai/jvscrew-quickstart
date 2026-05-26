@@ -1,4 +1,9 @@
-import type { ListWorkspaceFilesResponse, DownloadUrlResponse, SyncResponse } from '../types/files';
+import type {
+  ClearWorkspaceResponse,
+  DownloadUrlResponse,
+  ListWorkspaceFilesResponse,
+  SyncResponse,
+} from '../types/files';
 
 export async function listWorkspaceFiles(params: {
   externalUserId: string;
@@ -66,4 +71,27 @@ export async function getWorkspaceFileDownloadUrl(params: {
     throw new Error(data.Message || data.Code || `API error: ${res.status}`);
   }
   return data;
+}
+
+export async function clearUserWorkspace(params: {
+  externalUserId: string;
+  templateId?: string;
+}): Promise<ClearWorkspaceResponse> {
+  const res = await fetch('/api/files/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok || data.Success === false || (data.Code && data.Code !== '200' && data.Code !== 'ok')) {
+    throw new Error(data.Message || data.Code || `API error: ${res.status}`);
+  }
+  return {
+    Success: true,
+    Code: data.Code,
+    ExternalUserId: data.ExternalUserId,
+    ClearedCount: data.ClearedCount ?? 0,
+    FailedCount: data.FailedCount ?? 0,
+    Workspaces: Array.isArray(data.Workspaces) ? data.Workspaces : [],
+  };
 }

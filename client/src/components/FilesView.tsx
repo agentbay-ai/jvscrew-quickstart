@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAuthStore } from '../stores/authStore';
 import { listTemplates } from '../services/api';
-import { listWorkspaceFiles, syncWorkspaceFiles, getWorkspaceFileDownloadUrl } from '../services/files';
+import { clearUserWorkspace, listWorkspaceFiles, syncWorkspaceFiles, getWorkspaceFileDownloadUrl } from '../services/files';
 import type { TemplateItem } from '../types/api';
 import type { WorkspaceFile } from '../types/files';
 
@@ -390,6 +390,44 @@ export default function FilesView() {
     setIsSyncing(false);
   };
 
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearStatus, setClearStatus] = useState('');
+
+  const handleClearWorkspace = async () => {
+    if (!config || isClearing) return;
+    const scope = selectedTemplate?.TemplateKey || selectedTemplateId || '当前模板';
+    if (!window.confirm(
+      `确定要重置「${scope}」的工作空间吗？\n该操作会清空云端为该模板存储的所有用户文件，且不可撤销。`,
+    )) return;
+    setIsClearing(true);
+    setError('');
+    setClearStatus('');
+    try {
+      const result = await clearUserWorkspace({
+        externalUserId: config.externalUserId,
+        templateId: selectedTemplateId || undefined,
+      });
+      const failedDetail = result.Workspaces
+        .filter((w) => w.Status === 'failed')
+        .map((w) => `${w.TemplateId}: ${w.Error || '未知错误'}`)
+        .join('；');
+      setClearStatus(
+        result.FailedCount > 0
+          ? `已清理 ${result.ClearedCount} 个，失败 ${result.FailedCount} 个 (${failedDetail})`
+          : `已清理 ${result.ClearedCount} 个工作空间`,
+      );
+      if (selectedTemplateId) {
+        await loadFiles(selectedTemplateId, '/', 1);
+        setCurrentPath('/');
+        setPageNumber(1);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear workspace');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
   const handleNavigate = (path: string) => {
     setCurrentPath(path);
     setPageNumber(1);
@@ -520,11 +558,40 @@ export default function FilesView() {
             </button>
           </div>
 
-          {/* Storage stats */}
-          <div className="flex items-center rounded-xl border border-[#EAEBF2] bg-white px-4 h-[52px] shrink-0">
-            <span className="text-xs text-black/80">总容量 <span className="font-medium text-black">50 GB</span></span>
+          {/* Storage stats + reset */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleClearWorkspace}
+              disabled={isClearing || !config}
+              className="h-[52px] px-4 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-medium
+                         hover:bg-red-50 hover:border-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed
+                         flex items-center gap-1.5"
+              title={selectedTemplate?.TemplateKey
+                ? `清空「${selectedTemplate.TemplateKey}」的工作空间`
+                : '清空当前模板的工作空间'}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+              </svg>
+              {isClearing ? '重置中...' : '重置数据'}
+            </button>
+            <div className="flex items-center rounded-xl border border-[#EAEBF2] bg-white px-4 h-[52px]">
+              <span className="text-xs text-black/80">总容量 <span className="font-medium text-black">50 GB</span></span>
+            </div>
           </div>
         </div>
+
+        {clearStatus && (
+          <div className="px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs flex items-center justify-between shrink-0">
+            <span>{clearStatus}</span>
+            <button onClick={() => setClearStatus('')} className="text-emerald-600 hover:text-emerald-800">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {/* Breadcrumb (only when not at root) */}
         {currentPath !== '/' && (

@@ -7,6 +7,7 @@ import TasksView from '../components/TasksView';
 import ExpertsView from '../components/ExpertsView';
 import SkillsView from '../components/SkillsView';
 import FilesView from '../components/FilesView';
+import BillingView from '../components/BillingView';
 import TaskRunToast from '../components/TaskRunToast';
 
 import UserProfilePopover from '../components/UserProfilePopover';
@@ -70,6 +71,9 @@ export default function ConsolePage() {
             {activeTab === 'skills' && (
               <span className="text-lg font-medium text-black truncate">技能</span>
             )}
+            {activeTab === 'usage' && (
+              <span className="text-lg font-medium text-black truncate">用量</span>
+            )}
           </div>
 
           <div className="flex items-center gap-4">
@@ -92,7 +96,7 @@ export default function ConsolePage() {
             <SessionPanel onNewChat={newChat} onOpenTasks={() => setShowTasks(true)} onOpenFiles={() => setActiveTab('files')} />
           )}
 
-          <div className={`flex-1 overflow-hidden ${activeTab === 'files' ? '' : 'flex flex-row gap-4 px-4 pb-2'}`}>
+          <div className={`flex-1 overflow-hidden ${activeTab === 'files' || activeTab === 'usage' ? '' : 'flex flex-row gap-4 px-4 pb-2'}`}>
             {activeTab === 'chat' && (
               <>
                 <div className={(sandboxPreviewOpen && currentResourceUrl) || isPolling ? 'flex-[38] min-w-[320px]' : 'flex-1 min-w-0'}>
@@ -104,6 +108,7 @@ export default function ConsolePage() {
             {activeTab === 'experts' && <ExpertsView onStartChat={handleStartChat} />}
             {activeTab === 'skills' && <SkillsView />}
             {activeTab === 'files' && <FilesView />}
+            {activeTab === 'usage' && <BillingView />}
           </div>
         </div>
       </div>

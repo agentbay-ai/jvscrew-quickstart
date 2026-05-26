@@ -42,6 +42,30 @@ router.post('/sync', async (req, res) => {
   }
 });
 
+router.post('/clear', async (req, res) => {
+  try {
+    const { externalUserId, templateId } = req.body;
+
+    if (!externalUserId) {
+      return res.status(400).json({
+        Success: false,
+        Message: 'externalUserId is required',
+      });
+    }
+
+    const extra: Record<string, string> = { ExternalUserId: externalUserId };
+    if (templateId) extra.TemplateId = templateId;
+
+    const data = await popRequest('ClearUserWorkspace', extra);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      Success: false,
+      Message: err instanceof Error ? err.message : 'Internal error',
+    });
+  }
+});
+
 router.post('/download-url', async (req, res) => {
   try {
     const { externalUserId, filePath, templateId } = req.body;

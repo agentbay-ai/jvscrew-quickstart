@@ -1,9 +1,19 @@
 import type {
+  AgentEnvVarInput,
+  AgentEnvVarSummary,
   AuthConfig,
+  DeleteAgentEnvVarResponse,
+  GetAgentEnvVarResponse,
+  ListSkillPreferencesResponse,
   ListSkillsResponse,
   ListTemplatesResponse,
+  ListUserSkillsResponse,
   SessionItem,
   SessionMessage,
+  SetAgentEnvVarResponse,
+  SetSkillPreferenceResponse,
+  SkillPreference,
+  SkillPreferenceAction,
   TemplateDetailResponse,
   TemplateItem,
 } from '../types/api';
@@ -162,6 +172,144 @@ export async function listSkills(
   const data = await res.json();
   if (!res.ok || data.Success === false) {
     throw new Error(data.Message || data.Code || 'Failed to list skills');
+  }
+  return {
+    ...data,
+    Skills: Array.isArray(data.Skills) ? data.Skills : [],
+  };
+}
+
+export async function listSkillPreferencesPage(
+  token: string,
+  templateId?: string,
+  nextToken?: string,
+): Promise<ListSkillPreferencesResponse> {
+  const body: Record<string, unknown> = { MaxResults: 100 };
+  if (nextToken) body.NextToken = nextToken;
+  const res = await jwtFetch('ListSkillPreferences', body, token, templateId);
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to list skill preferences');
+  }
+  return {
+    ...data,
+    SkillPreferences: Array.isArray(data.SkillPreferences) ? data.SkillPreferences : [],
+  };
+}
+
+export async function listAllSkillPreferences(
+  token: string,
+  templateId?: string,
+): Promise<SkillPreference[]> {
+  const out: SkillPreference[] = [];
+  let nextToken: string | undefined;
+  do {
+    const page = await listSkillPreferencesPage(token, templateId, nextToken);
+    out.push(...page.SkillPreferences);
+    nextToken = page.NextToken && page.NextToken.length > 0 ? page.NextToken : undefined;
+  } while (nextToken);
+  return out;
+}
+
+export async function setSkillPreference(
+  token: string,
+  skillId: string,
+  preference: SkillPreferenceAction,
+  templateId?: string,
+): Promise<SetSkillPreferenceResponse> {
+  const res = await jwtFetch(
+    'SetSkillPreference',
+    { SkillId: skillId, Preference: preference },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to set skill preference');
+  }
+  return data;
+}
+
+export async function getAgentEnvVarsPage(
+  token: string,
+  templateId?: string,
+  nextToken?: string,
+): Promise<GetAgentEnvVarResponse> {
+  const body: Record<string, unknown> = { MaxResults: 100 };
+  if (nextToken) body.NextToken = nextToken;
+  const res = await jwtFetch('GetAgentEnvVarForUser', body, token, templateId);
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to fetch env vars');
+  }
+  return {
+    ...data,
+    Variables: Array.isArray(data.Variables) ? data.Variables : [],
+  };
+}
+
+export async function listAllAgentEnvVars(
+  token: string,
+  templateId?: string,
+): Promise<AgentEnvVarSummary[]> {
+  const out: AgentEnvVarSummary[] = [];
+  let nextToken: string | undefined;
+  do {
+    const page = await getAgentEnvVarsPage(token, templateId, nextToken);
+    out.push(...page.Variables);
+    nextToken = page.NextToken && page.NextToken.length > 0 ? page.NextToken : undefined;
+  } while (nextToken);
+  return out;
+}
+
+export async function setAgentEnvVars(
+  token: string,
+  variables: AgentEnvVarInput[],
+  templateId?: string,
+): Promise<SetAgentEnvVarResponse> {
+  const res = await jwtFetch(
+    'SetAgentEnvVarForUser',
+    { Variables: variables },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to set env vars');
+  }
+  return data;
+}
+
+export async function deleteAgentEnvVars(
+  token: string,
+  variableKeys: string[],
+  templateId?: string,
+): Promise<DeleteAgentEnvVarResponse> {
+  const res = await jwtFetch(
+    'DeleteAgentEnvVarForUser',
+    { VariableKeys: variableKeys },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to delete env vars');
+  }
+  return data;
+}
+
+export async function listUserSkills(
+  externalUserId: string,
+  templateId?: string,
+): Promise<ListUserSkillsResponse> {
+  const res = await fetch('/api/skills/user-list', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ externalUserId, templateId }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to list user skills');
   }
   return {
     ...data,

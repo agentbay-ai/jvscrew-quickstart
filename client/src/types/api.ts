@@ -202,6 +202,78 @@ export interface ListSkillsResponse {
   TotalCount: string;
 }
 
+export interface UserSkill {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface ListUserSkillsResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  Skills: UserSkill[];
+}
+
+export type SkillPreferenceValue = 'Enabled' | 'Disabled';
+export type SkillPreferenceAction = SkillPreferenceValue | 'Default';
+
+export interface SkillPreference {
+  SkillId: string;
+  UserPreference: SkillPreferenceValue;
+  UpdatedAt?: string;
+}
+
+export interface ListSkillPreferencesResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  SkillPreferences: SkillPreference[];
+  NextToken?: string;
+}
+
+export interface SetSkillPreferenceResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  SkillId: string;
+  UserPreference: SkillPreferenceAction;
+}
+
+export interface AgentEnvVarSummary {
+  Key: string;
+  Description?: string;
+  UpdatedAt?: string;
+}
+
+export interface AgentEnvVarInput {
+  Key: string;
+  Value: string;
+  Description?: string;
+}
+
+export interface GetAgentEnvVarResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  Variables: AgentEnvVarSummary[];
+  NextToken?: string;
+}
+
+export interface SetAgentEnvVarResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  ProcessedKey: string[];
+}
+
+export interface DeleteAgentEnvVarResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  DeletedKeys: string[];
+}
+
 export interface ToolCallInfo {
   name: string;
   status: 'calling' | 'completed';
