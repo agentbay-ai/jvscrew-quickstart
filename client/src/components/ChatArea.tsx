@@ -3,12 +3,27 @@ import { useChat } from '../hooks/useChat';
 import { useFileUpload } from '../hooks/useFileUpload';
 import { useAuthStore } from '../stores/authStore';
 import { useChatStore, type PendingFile } from '../stores/chatStore';
-import { listSkills } from '../services/api';
+import { listAllSkillPreferences, listSkills, listUserSkills } from '../services/api';
 import ChatInput from './ChatInput';
 import MessageBubble from './MessageBubble';
 import QuickActions from './QuickActions';
 import { SandboxMiniFloat } from './SandboxPanel';
-import type { SkillItem } from '../types/api';
+import type { SkillItem, UserSkill } from '../types/api';
+
+const USER_SKILL_PREFIX = 'user:';
+const USER_SKILL_ICON = '🧩';
+
+function userSkillToItem(skill: UserSkill): SkillItem {
+  return {
+    SkillId: `${USER_SKILL_PREFIX}${skill.id}`,
+    SkillName: skill.name,
+    Description: skill.description,
+    Icon: USER_SKILL_ICON,
+    Enabled: true,
+    SkillStatus: 'AVAILABLE',
+    GmtModified: '',
+  };
+}
 
 function downloadPendingFile(file: PendingFile) {
   const byteChars = atob(file.base64);
@@ -44,25 +59,39 @@ export default function ChatArea() {
   const config = useAuthStore((s) => s.config);
 
   useEffect(() => {
-    if (!config?.templateId) {
+    if (!config?.templateId || !config?.externalUserId) {
       setSkills([]);
       return;
     }
     const templateId = config.templateId;
+    const externalUserId = config.externalUserId;
     let cancelled = false;
     (async () => {
       try {
-        const [builtin, market] = await Promise.all([
+        const token = useAuthStore.getState().accessToken
+          ?? (await useAuthStore.getState().refreshAccessToken());
+        const [builtin, market, userListResult, prefs] = await Promise.all([
           listSkills('builtin', templateId),
           listSkills('market', templateId),
+          listUserSkills(externalUserId, templateId).catch(() => ({ Success: false, Skills: [] as UserSkill[] })),
+          token
+            ? listAllSkillPreferences(token, templateId).catch(() => [])
+            : Promise.resolve([]),
         ]);
-        if (!cancelled) setSkills([...builtin.Skills, ...market.Skills]);
+        if (cancelled) return;
+        const userItems = userListResult.Skills.map(userSkillToItem);
+        const templateSkills = [...builtin.Skills, ...market.Skills].map((s) => {
+          const pref = prefs.find((p) => p.SkillId === s.SkillId);
+          if (!pref) return s;
+          return { ...s, Enabled: pref.UserPreference === 'Enabled' };
+        });
+        setSkills([...userItems, ...templateSkills]);
       } catch {
         if (!cancelled) setSkills([]);
       }
     })();
     return () => { cancelled = true; };
-  }, [config?.templateId]);
+  }, [config?.templateId, config?.externalUserId]);
 
   useEffect(() => {
     const el = scrollRef.current;

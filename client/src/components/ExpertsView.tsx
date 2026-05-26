@@ -1,13 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getTemplate, listSkills, listTemplates } from '../services/api';
+import { getTemplate, listSkills, listTemplates, listUserSkills } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
+import { useSkillPreferences } from '../hooks/useSkillPreferences';
+import SkillToggle from './SkillToggle';
 import type {
   ExpertTemplate,
   SkillItem,
   TemplateDetailResponse,
   TemplateMcpClient,
   TemplateItem,
+  UserSkill,
 } from '../types/api';
+
+const USER_SKILL_PREFIX = 'user:';
+const USER_SKILL_ICON = '🧩';
+
+function isUserSkill(skillId: string): boolean {
+  return skillId.startsWith(USER_SKILL_PREFIX);
+}
+
+function userSkillToItem(skill: UserSkill): SkillItem {
+  return {
+    SkillId: `${USER_SKILL_PREFIX}${skill.id}`,
+    SkillName: skill.name,
+    Description: skill.description,
+    Icon: USER_SKILL_ICON,
+    Enabled: true,
+    SkillStatus: 'AVAILABLE',
+    GmtModified: '',
+  };
+}
 
 const AVATARS = [
   'https://img.alicdn.com/imgextra/i2/6000000006913/O1CN017tneP620wD8kVZFDn_!!6000000006913-2-gg_dtc.png',
@@ -415,31 +437,42 @@ function SkillsModal({
   expert: ExpertTemplate;
   onClose: () => void;
 }) {
+  const externalUserId = useAuthStore((s) => s.config?.externalUserId);
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const prefs = useSkillPreferences(expert.templateId);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setError('');
     try {
-      const [builtin, market] = await Promise.all([
+      const [builtin, market, userListResult] = await Promise.all([
         listSkills('builtin', expert.templateId),
         listSkills('market', expert.templateId),
+        externalUserId
+          ? listUserSkills(externalUserId, expert.templateId).catch((err) => {
+              console.warn('[SkillsModal] failed to load user skills', err);
+              return { Success: false, Skills: [] as UserSkill[] };
+            })
+          : Promise.resolve({ Success: true, Skills: [] as UserSkill[] }),
       ]);
-      setSkills([...builtin.Skills, ...market.Skills]);
+      const userItems = userListResult.Skills.map(userSkillToItem);
+      setSkills([...userItems, ...builtin.Skills, ...market.Skills]);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载技能失败');
     } finally {
       setIsLoading(false);
     }
-  }, [expert.templateId]);
+  }, [expert.templateId, externalUserId]);
 
   useEffect(() => {
     queueMicrotask(() => {
       void load();
     });
   }, [load]);
+
+  const displayError = error || prefs.error;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
@@ -467,10 +500,15 @@ function SkillsModal({
           {isLoading && (
             <div className="text-center py-12 text-sm text-black/40">加载技能中...</div>
           )}
-          {error && (
-            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600 flex items-center justify-between">
-              {error}
-              <button onClick={() => void load()} className="text-red-500 hover:text-red-700 underline text-xs ml-4">重试</button>
+          {displayError && (
+            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600 flex items-center justify-between mb-3">
+              {displayError}
+              <button
+                onClick={() => { setError(''); prefs.clearError(); void load(); void prefs.reload(); }}
+                className="text-red-500 hover:text-red-700 underline text-xs ml-4"
+              >
+                重试
+              </button>
             </div>
           )}
           {!isLoading && skills.length === 0 && !error && (
@@ -478,44 +516,80 @@ function SkillsModal({
           )}
           {!isLoading && skills.length > 0 && (
             <div className="flex flex-col gap-3">
-              {skills.map((skill) => (
-                <div
-                  key={skill.SkillId}
-                  className={`rounded-[16px] flex flex-row items-center gap-3 px-4 min-h-[64px] transition
-                    ${skill.Enabled
-                      ? 'bg-white shadow-[inset_0_0_0_1px_#2F3A801A] hover:shadow-[inset_0_0_0_1px_#2F3A8040]'
-                      : 'bg-white/60 shadow-[inset_0_0_0_1px_#2F3A801A] opacity-50'
-                    }`}
-                >
-                  {isEmojiIcon(skill.Icon) ? (
-                    <span className="w-10 h-10 rounded-lg bg-[#F5F6FA] flex items-center justify-center text-xl shrink-0">
-                      {skill.Icon}
-                    </span>
-                  ) : (
-                    <img src={skill.Icon} alt={skill.SkillName} className="w-10 h-10 shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-black truncate">{skill.SkillName}</span>
-                      {skill.SkillId.startsWith('builtin:') && (
-                        <span className="shrink-0 rounded-md bg-black/[0.04] px-1.5 text-[11px] leading-[18px] text-black/50">内置</span>
-                      )}
+              {skills.map((skill) => {
+                const userSkill = isUserSkill(skill.SkillId);
+                const enabled = userSkill ? true : prefs.effectiveEnabled(skill);
+                const overridden = !userSkill && prefs.hasOverride(skill.SkillId);
+                const pending = !userSkill && prefs.pendingIds.has(skill.SkillId);
+                return (
+                  <div
+                    key={skill.SkillId}
+                    className={`rounded-[16px] flex flex-row items-center gap-3 px-4 min-h-[64px] transition
+                      ${enabled
+                        ? 'bg-white shadow-[inset_0_0_0_1px_#2F3A801A]'
+                        : 'bg-white/70 shadow-[inset_0_0_0_1px_#2F3A801A] opacity-70'
+                      }`}
+                  >
+                    {isEmojiIcon(skill.Icon) ? (
+                      <span className="w-10 h-10 rounded-lg bg-[#F5F6FA] flex items-center justify-center text-xl shrink-0">
+                        {skill.Icon}
+                      </span>
+                    ) : (
+                      <img src={skill.Icon} alt={skill.SkillName} className="w-10 h-10 shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-black truncate">{skill.SkillName}</span>
+                        {skill.SkillId.startsWith('builtin:') && (
+                          <span className="shrink-0 rounded-md bg-black/[0.04] px-1.5 text-[11px] leading-[18px] text-black/50">内置</span>
+                        )}
+                        {userSkill && (
+                          <span className="shrink-0 rounded-md bg-[#EEF1FF] px-1.5 text-[11px] leading-[18px] text-[#2F3A80] shadow-[inset_0_0_0_1px_#2F3A8033]">
+                            个人
+                          </span>
+                        )}
+                        {overridden && (
+                          <span
+                            className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#2F3A80]"
+                            title="你已为此专家自定义该技能开关"
+                          />
+                        )}
+                      </div>
+                      <span className="text-xs text-black/50 truncate">
+                        {skill.Description || (userSkill ? '用户自建技能' : '')}
+                      </span>
                     </div>
-                    <span className="text-xs text-black/50 truncate">{skill.Description}</span>
+                    {userSkill ? (
+                      <span className="shrink-0 text-[11px] text-black/40">始终可用</span>
+                    ) : (
+                      <div className="flex items-center gap-2 shrink-0">
+                        {overridden && (
+                          <button
+                            type="button"
+                            disabled={pending}
+                            onClick={() => void prefs.restoreDefault(skill)}
+                            className="text-[11px] text-[#2F3A80] hover:underline disabled:opacity-50 disabled:cursor-wait"
+                          >
+                            恢复默认
+                          </button>
+                        )}
+                        <SkillToggle
+                          enabled={enabled}
+                          pending={pending}
+                          onToggle={() => void prefs.togglePreference(skill)}
+                          size="sm"
+                        />
+                      </div>
+                    )}
                   </div>
-                  {skill.Enabled ? (
-                    <span className="shrink-0 text-xs text-[#48CD00] font-medium">已启用</span>
-                  ) : (
-                    <span className="shrink-0 text-xs text-black/30">未启用</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
         <div className="px-6 py-3 border-t border-gray-100 shrink-0 flex justify-between items-center">
-          <span className="text-xs text-black/40">{skills.length} 个技能</span>
+          <span className="text-xs text-black/40">{skills.length} 个技能 · 用户偏好优先于模板默认</span>
           <button
             onClick={onClose}
             className="h-9 px-5 rounded-full bg-[#EDEEF6] text-sm font-medium text-black hover:bg-[#e2e3f0] transition"
