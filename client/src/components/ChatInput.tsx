@@ -17,15 +17,20 @@ interface ChatInputProps {
   includeToolCalls?: boolean;
   onToggleReasoning?: () => void;
   onToggleToolCalls?: () => void;
+  isDragOver?: boolean;
 }
 
 export default function ChatInput({
   onSend, disabled, onStop, isStreaming, skills,
   includeReasoning, includeToolCalls, onToggleReasoning, onToggleToolCalls,
+  isDragOver,
 }: ChatInputProps) {
   const text = useChatStore((s) => s.draftText);
   const setText = useChatStore((s) => s.setDraftText);
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const attachedFiles = useChatStore((s) => s.attachedFiles);
+  const addAttachedFiles = useChatStore((s) => s.addAttachedFiles);
+  const removeAttachedFile = useChatStore((s) => s.removeAttachedFile);
+  const clearAttachedFiles = useChatStore((s) => s.clearAttachedFiles);
   const [showOptions, setShowOptions] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
   const [showEnvVars, setShowEnvVars] = useState(false);
@@ -51,8 +56,8 @@ export default function ChatInput({
     if (!trimmed && attachedFiles.length === 0) return;
     onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined);
     setText('');
-    setAttachedFiles([]);
-  }, [text, attachedFiles, onSend, setText]);
+    clearAttachedFiles();
+  }, [text, attachedFiles, onSend, setText, clearAttachedFiles]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -63,12 +68,12 @@ export default function ChatInput({
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    setAttachedFiles((prev) => [...prev, ...files]);
+    addAttachedFiles(files);
     e.target.value = '';
   };
 
   const removeFile = (idx: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== idx));
+    removeAttachedFile(idx);
   };
 
   useEffect(() => {
@@ -104,7 +109,26 @@ export default function ChatInput({
 
   return (
     <div className="w-full max-w-[628px] mx-auto">
-      <div className="rounded-2xl bg-white border border-border-strong shadow-sm">
+      <div className="relative rounded-2xl bg-white border border-border-strong shadow-sm">
+        {/* Drag-and-drop overlay (input-box scoped) */}
+        {isDragOver && (
+          <div className="absolute inset-0 z-30 rounded-2xl flex items-center justify-center pointer-events-none animate-dropzone-in overflow-hidden">
+            <div className="absolute inset-0 rounded-2xl bg-white/80 backdrop-blur-[2px] border-2 border-dashed border-primary/60" />
+            <div className="relative flex items-center gap-3 text-primary px-4">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5m0 0L7.5 12M12 7.5v9" />
+                </svg>
+              </div>
+              <div className="flex flex-col">
+                <div className="text-sm font-medium leading-tight">松开以添加附件</div>
+                <div className="text-[11px] text-text-muted leading-tight mt-0.5">支持图片、文档等本地文件</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Attached files */}
         {attachedFiles.length > 0 && (
           <div className="px-4 pt-3 flex flex-wrap gap-2">

@@ -47,6 +47,7 @@ export default function ChatArea() {
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const pendingFiles = useChatStore((s) => s.pendingFiles);
   const removePendingFile = useChatStore((s) => s.removePendingFile);
+  const addAttachedFiles = useChatStore((s) => s.addAttachedFiles);
   const includeReasoning = useChatStore((s) => s.includeReasoning);
   const setIncludeReasoning = useChatStore((s) => s.setIncludeReasoning);
   const includeToolCalls = useChatStore((s) => s.includeToolCalls);
@@ -57,6 +58,43 @@ export default function ChatArea() {
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const config = useAuthStore((s) => s.config);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const isFileDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer.types || []).includes('Files');
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter.current += 1;
+    if (dragCounter.current === 1) setIsDragOver(true);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) addAttachedFiles(files);
+  };
 
   useEffect(() => {
     if (!config?.templateId || !config?.externalUserId) {
@@ -150,7 +188,13 @@ export default function ChatArea() {
 
   return (
     <>
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <div
+      className="flex-1 flex flex-col h-full overflow-hidden relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Upload progress bar */}
       {isUploading && (
         <div className="px-6 py-2 bg-primary-light text-xs text-primary flex items-center gap-2">
@@ -187,6 +231,7 @@ export default function ChatArea() {
               includeToolCalls={includeToolCalls}
               onToggleReasoning={() => setIncludeReasoning(!includeReasoning)}
               onToggleToolCalls={() => setIncludeToolCalls(!includeToolCalls)}
+              isDragOver={isDragOver}
             />
             <QuickActions onSelect={(text) => sendMessage(text)} />
           </div>
@@ -268,6 +313,7 @@ export default function ChatArea() {
               includeToolCalls={includeToolCalls}
               onToggleReasoning={() => setIncludeReasoning(!includeReasoning)}
               onToggleToolCalls={() => setIncludeToolCalls(!includeToolCalls)}
+              isDragOver={isDragOver}
             />
           </div>
         </>

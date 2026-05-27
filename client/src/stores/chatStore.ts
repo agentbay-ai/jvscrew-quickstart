@@ -15,6 +15,7 @@ interface ChatState {
   abortControllers: Record<string, AbortController>;
   isLoadingHistory: boolean;
   pendingFiles: PendingFile[];
+  attachedFiles: File[];
   draftText: string;
   includeReasoning: boolean;
   includeToolCalls: boolean;
@@ -41,6 +42,10 @@ interface ChatState {
 
   addPendingFile: (file: PendingFile) => void;
   removePendingFile: (id: string) => void;
+
+  addAttachedFiles: (files: File[]) => void;
+  removeAttachedFile: (idx: number) => void;
+  clearAttachedFiles: () => void;
 
   setDraftText: (text: string) => void;
 
@@ -71,6 +76,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   abortControllers: {},
   isLoadingHistory: false,
   pendingFiles: [],
+  attachedFiles: [],
   draftText: '',
   includeReasoning: true,
   includeToolCalls: true,
@@ -231,6 +237,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   addPendingFile: (file) => set((s) => ({ pendingFiles: [...s.pendingFiles, file] })),
   removePendingFile: (id) => set((s) => ({ pendingFiles: s.pendingFiles.filter((f) => f.id !== id) })),
 
+  addAttachedFiles: (files) => set((s) => ({ attachedFiles: [...s.attachedFiles, ...files] })),
+  removeAttachedFile: (idx) => set((s) => ({ attachedFiles: s.attachedFiles.filter((_, i) => i !== idx) })),
+  clearAttachedFiles: () => set({ attachedFiles: [] }),
+
   setDraftText: (text) => set({ draftText: text }),
 
   clearMessages: () => set({
@@ -239,6 +249,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     isStreamingMap: {},
     abortControllers: {},
     pendingFiles: [],
+    attachedFiles: [],
     draftText: '',
   }),
 
