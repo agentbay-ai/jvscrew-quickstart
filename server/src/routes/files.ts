@@ -85,4 +85,58 @@ router.post('/download-url', async (req, res) => {
   }
 });
 
+router.post('/upload-url', async (req, res) => {
+  try {
+    const { externalUserId, filePath, templateId } = req.body;
+
+    if (!externalUserId || !filePath) {
+      return res.status(400).json({
+        Success: false,
+        Message: 'externalUserId and filePath are required',
+      });
+    }
+
+    const extra: Record<string, string> = {
+      ExternalUserId: externalUserId,
+      FilePath: filePath,
+    };
+    if (templateId) extra.TemplateId = templateId;
+
+    const data = await popRequest('GetWorkspaceFileUploadUrl', extra);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      Success: false,
+      Message: err instanceof Error ? err.message : 'Internal error',
+    });
+  }
+});
+
+router.post('/delete', async (req, res) => {
+  try {
+    const { externalUserId, filePath, templateId } = req.body;
+
+    if (!externalUserId || !filePath) {
+      return res.status(400).json({
+        Success: false,
+        Message: 'externalUserId and filePath are required',
+      });
+    }
+
+    const extra: Record<string, string> = {
+      ExternalUserId: externalUserId,
+      FilePath: filePath,
+    };
+    if (templateId) extra.TemplateId = templateId;
+
+    const data = await popRequest('DeleteWorkspaceFile', extra);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      Success: false,
+      Message: err instanceof Error ? err.message : 'Internal error',
+    });
+  }
+});
+
 export default router;

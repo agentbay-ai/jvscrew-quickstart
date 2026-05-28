@@ -1,8 +1,10 @@
 import type {
   ClearWorkspaceResponse,
+  DeleteFileResponse,
   DownloadUrlResponse,
   ListWorkspaceFilesResponse,
   SyncResponse,
+  UploadUrlResponse,
 } from '../types/files';
 
 export async function listWorkspaceFiles(params: {
@@ -71,6 +73,55 @@ export async function getWorkspaceFileDownloadUrl(params: {
     throw new Error(data.Message || data.Code || `API error: ${res.status}`);
   }
   return data;
+}
+
+export async function getWorkspaceFileUploadUrl(params: {
+  externalUserId: string;
+  filePath: string;
+  templateId?: string;
+}): Promise<UploadUrlResponse> {
+  const res = await fetch('/api/files/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || `API error: ${res.status}`);
+  }
+  return data;
+}
+
+export async function deleteWorkspaceFile(params: {
+  externalUserId: string;
+  filePath: string;
+  templateId?: string;
+}): Promise<DeleteFileResponse> {
+  const res = await fetch('/api/files/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || `API error: ${res.status}`);
+  }
+  return data;
+}
+
+export async function putFileToPresignedUrl(
+  uploadUrl: string,
+  file: File,
+  headers?: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    ...(headers ? { headers } : {}),
+  });
+  if (!res.ok) {
+    throw new Error(`Upload failed: HTTP ${res.status}`);
+  }
 }
 
 export async function clearUserWorkspace(params: {

@@ -24,6 +24,23 @@ export interface DownloadUrlResponse {
   FileSize: number;
 }
 
+export interface UploadUrlResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  UploadUrl: string;
+  ExpiresInSeconds: number;
+  FilePath: string;
+  MaxFileSize: number;
+  UploadHeadersHint?: Record<string, string>;
+}
+
+export interface DeleteFileResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+}
+
 export interface SyncResponse {
   Success: boolean;
   SyncStatus: 'completed' | 'no_active_session';

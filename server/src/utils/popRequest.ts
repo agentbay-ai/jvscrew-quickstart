@@ -42,6 +42,7 @@ export async function popRequest(
     console.log(`[POP] ${action} OK`, JSON.stringify(logEntry));
   } else {
     console.error(`[POP] ${action} FAILED`, JSON.stringify(logEntry));
+    console.error(`[POP] ${action} FULL_RESPONSE`, JSON.stringify(data));
   }
 
   return data;

@@ -3,11 +3,22 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAuthStore } from '../stores/authStore';
 import { listTemplates } from '../services/api';
-import { clearUserWorkspace, listWorkspaceFiles, syncWorkspaceFiles, getWorkspaceFileDownloadUrl } from '../services/files';
+import {
+  clearUserWorkspace,
+  deleteWorkspaceFile,
+  getWorkspaceFileDownloadUrl,
+  getWorkspaceFileUploadUrl,
+  listWorkspaceFiles,
+  putFileToPresignedUrl,
+  syncWorkspaceFiles,
+} from '../services/files';
 import type { TemplateItem } from '../types/api';
 import type { WorkspaceFile } from '../types/files';
 
 const PAGE_SIZE = 50;
+
+// 上传功能依赖后端 GetWorkspaceFileUploadUrl 接口，目前后端 bug 未修复，先隐藏入口
+const UPLOAD_ENABLED = false;
 
 const AVATARS = [
   'https://img.alicdn.com/imgextra/i2/6000000006913/O1CN017tneP620wD8kVZFDn_!!6000000006913-2-gg_dtc.png',
@@ -46,10 +57,10 @@ const COLUMNS: ColumnDef[] = [
   { key: 'source', label: '来自专家', initialWidth: 150, minWidth: 80, resizable: true },
   { key: 'size', label: '大小', initialWidth: 90, minWidth: 50, resizable: true },
   { key: 'modifiedAt', label: '最后修改时间', initialWidth: 180, minWidth: 100, resizable: true },
-  { key: 'action', label: '操作', initialWidth: 60, minWidth: 48, resizable: false },
+  { key: 'action', label: '操作', initialWidth: 110, minWidth: 96, resizable: false },
 ];
 
-const COL_WIDTHS_STORAGE_KEY = 'files-view-col-widths';
+const COL_WIDTHS_STORAGE_KEY = 'files-view-col-widths-v2';
 
 function useResizableColumns(columns: ColumnDef[]) {
   const [widths, setWidths] = useState(() => {
@@ -393,6 +404,95 @@ export default function FilesView() {
   const [isClearing, setIsClearing] = useState(false);
   const [clearStatus, setClearStatus] = useState('');
 
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  const [templateTooltip, setTemplateTooltip] = useState<{
+    templateId: string;
+    templateKey: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!pendingDeletePath) return;
+    const t = setTimeout(() => setPendingDeletePath(null), 2500);
+    return () => clearTimeout(t);
+  }, [pendingDeletePath]);
+
+  const handleDeleteFile = useCallback(async (file: WorkspaceFile) => {
+    if (!config || !selectedTemplateId) return;
+    const filePath = file.FilePath.replace(/^\/+/, '');
+    setDeletingPath(file.FilePath);
+    setPendingDeletePath(null);
+    setError('');
+    try {
+      await deleteWorkspaceFile({
+        externalUserId: config.externalUserId,
+        filePath,
+        templateId: selectedTemplateId,
+      });
+      setFiles((prev) => prev.filter((f) => f.FilePath !== file.FilePath));
+      setTotalCount((c) => Math.max(0, c - 1));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败');
+    } finally {
+      setDeletingPath(null);
+    }
+  }, [config, selectedTemplateId]);
+
+  const handleUploadFiles = useCallback(async (fileList: FileList) => {
+    if (!config || !selectedTemplateId) return;
+    const items = Array.from(fileList);
+    if (items.length === 0) return;
+
+    const dir = currentPath.replace(/^\/+/, '').replace(/\/+$/, '');
+    setIsUploading(true);
+    setError('');
+    setUploadStatus('');
+    let okCount = 0;
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const file = items[i];
+        setUploadStatus(`上传中 (${i + 1}/${items.length}) ${file.name}`);
+        const targetPath = dir ? `${dir}/${file.name}` : file.name;
+
+        const urlResp = await getWorkspaceFileUploadUrl({
+          externalUserId: config.externalUserId,
+          filePath: targetPath,
+          templateId: selectedTemplateId,
+        });
+        if (urlResp.MaxFileSize && file.size > urlResp.MaxFileSize) {
+          throw new Error(`${file.name} 超过单文件上限 ${formatBytes(urlResp.MaxFileSize)}`);
+        }
+        await putFileToPresignedUrl(urlResp.UploadUrl, file, urlResp.UploadHeadersHint);
+        okCount += 1;
+      }
+      setUploadStatus(`已上传 ${okCount} 个文件`);
+      await loadFiles(selectedTemplateId, currentPath, pageNumber);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '上传失败');
+    } finally {
+      setIsUploading(false);
+      setTimeout(() => setUploadStatus((s) => (s.startsWith('已上传') ? '' : s)), 2500);
+    }
+  }, [config, selectedTemplateId, currentPath, pageNumber, loadFiles]);
+
+  const handlePickUpload = () => {
+    if (isUploading) return;
+    uploadInputRef.current?.click();
+  };
+
+  const onUploadInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      void handleUploadFiles(e.target.files);
+    }
+    e.target.value = '';
+  };
+
   const handleClearWorkspace = async () => {
     if (!config || isClearing) return;
     const scope = selectedTemplate?.TemplateKey || selectedTemplateId || '当前模板';
@@ -516,6 +616,16 @@ export default function FilesView() {
                 <button
                   key={t.TemplateId}
                   onClick={() => handleSelectTemplate(t.TemplateId)}
+                  onMouseEnter={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setTemplateTooltip({
+                      templateId: t.TemplateId,
+                      templateKey: t.TemplateKey || '',
+                      x: rect.left + rect.width / 2,
+                      y: rect.bottom + 6,
+                    });
+                  }}
+                  onMouseLeave={() => setTemplateTooltip(null)}
                   style={{ borderRadius: '232px' }}
                   className={`flex items-center gap-2 px-3 w-[180px] h-[55px] bg-white transition shrink-0 overflow-hidden ${
                     active
@@ -537,37 +647,6 @@ export default function FilesView() {
 
           </div>
 
-          {/* Refresh + reset */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="w-[52px] h-[52px] rounded-xl border border-[#D5D8E6] bg-white flex items-center justify-center shrink-0
-                hover:border-gray-400 transition disabled:opacity-50"
-              title={isSyncing ? '同步中...' : '刷新同步'}
-            >
-              <svg className={`w-5 h-5 text-[#00000066] ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            <button
-              onClick={handleClearWorkspace}
-              disabled={isClearing || !config}
-              className="h-[52px] px-4 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-medium
-                         hover:bg-red-50 hover:border-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed
-                         flex items-center gap-1.5"
-              title={selectedTemplate?.TemplateKey
-                ? `清空「${selectedTemplate.TemplateKey}」的工作空间`
-                : '清空当前模板的工作空间'}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
-              </svg>
-              {isClearing ? '重置中...' : '重置'}
-            </button>
-          </div>
         </div>
 
         {clearStatus && (
@@ -620,6 +699,13 @@ export default function FilesView() {
         <div className="flex-1 flex flex-col min-h-0">
           {/* Table header */}
           <div className="flex items-center h-10 shrink-0 text-[14px] font-medium text-[#000000CC] leading-[22px] select-none">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={onUploadInputChange}
+            />
             {COLUMNS.map((col, i) => (
               <div
                 key={col.key}
@@ -630,7 +716,66 @@ export default function FilesView() {
                 {renderResizeHandle(i)}
               </div>
             ))}
+            <div className="ml-auto flex items-center gap-1.5 shrink-0 pr-1">
+              {UPLOAD_ENABLED && (
+                <button
+                  onClick={handlePickUpload}
+                  disabled={isUploading || !selectedTemplateId}
+                  className="h-8 px-2.5 rounded-lg border border-primary/30 bg-white text-primary text-[11px] font-medium
+                             hover:bg-primary/5 hover:border-primary/50 transition disabled:opacity-50 disabled:cursor-not-allowed
+                             flex items-center gap-1"
+                  title={selectedTemplate?.TemplateKey
+                    ? `上传到「${selectedTemplate.TemplateKey}」 · ${currentPath}`
+                    : '上传文件到当前目录'}
+                >
+                  {isUploading ? (
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 7.5L12 3m0 0L7.5 7.5M12 3v13.5" />
+                    </svg>
+                  )}
+                  {isUploading ? '上传中' : '上传'}
+                </button>
+              )}
+              <button
+                onClick={handleClearWorkspace}
+                disabled={isClearing || !config}
+                className="h-8 px-2.5 rounded-lg border border-red-200 bg-white text-red-600 text-[11px] font-medium
+                           hover:bg-red-50 hover:border-red-300 transition disabled:opacity-50 disabled:cursor-not-allowed
+                           flex items-center gap-1"
+                title={selectedTemplate?.TemplateKey
+                  ? `清空「${selectedTemplate.TemplateKey}」的工作空间`
+                  : '清空当前模板的工作空间'}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+                </svg>
+                {isClearing ? '重置中' : '重置'}
+              </button>
+              <button
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="w-8 h-8 rounded-lg border border-[#D5D8E6] bg-white flex items-center justify-center shrink-0
+                  hover:border-gray-400 transition disabled:opacity-50"
+                title={isSyncing ? '同步中...' : '刷新同步'}
+              >
+                <svg className={`w-4 h-4 text-[#00000066] ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </div>
           </div>
+
+          {uploadStatus && !error && (
+            <div className="px-2 py-1 text-[11px] text-primary/80 shrink-0">{uploadStatus}</div>
+          )}
 
           {/* Table body */}
           <div className="flex-1 overflow-y-auto">
@@ -703,20 +848,51 @@ export default function FilesView() {
 
                 {/* Col: 操作 */}
                 <div
-                  className="flex items-center justify-center h-full shrink-0"
+                  className="flex items-center justify-center gap-0.5 h-full shrink-0"
                   style={{ width: widths[4], minWidth: COLUMNS[4].minWidth }}
                 >
                   {file.FileType === 'file' && (
-                    <button
-                      onClick={() => handleDownload(file)}
-                      className="p-1 rounded hover:bg-gray-100 text-text-muted hover:text-text transition"
-                      title="下载"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                      </svg>
-                    </button>
+                    pendingDeletePath === file.FilePath ? (
+                      <>
+                        <button
+                          onClick={() => void handleDeleteFile(file)}
+                          disabled={deletingPath === file.FilePath}
+                          className="px-2 h-7 rounded-md bg-red-500 text-white text-[11px] font-medium hover:bg-red-600 disabled:opacity-50 transition"
+                        >
+                          {deletingPath === file.FilePath ? '删除中' : '确认删除'}
+                        </button>
+                        <button
+                          onClick={() => setPendingDeletePath(null)}
+                          className="px-1.5 h-7 rounded-md text-[11px] text-black/50 hover:bg-gray-100 transition"
+                        >
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleDownload(file)}
+                          className="p-1 rounded hover:bg-gray-100 text-text-muted hover:text-text transition"
+                          title="下载"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                              d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setPendingDeletePath(file.FilePath)}
+                          disabled={deletingPath === file.FilePath}
+                          className="p-1 rounded hover:bg-red-50 text-text-muted hover:text-red-600 disabled:opacity-50 transition"
+                          title="删除"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+                          </svg>
+                        </button>
+                      </>
+                    )
                   )}
                 </div>
               </div>
@@ -775,6 +951,18 @@ export default function FilesView() {
           }}
           onDownload={() => { void handleDownload(preview.file); }}
         />
+      )}
+
+      {templateTooltip && (
+        <div
+          className="fixed z-[100] -translate-x-1/2 px-2.5 py-1.5 rounded-md bg-gray-900/95 text-white text-[11px] shadow-lg pointer-events-none whitespace-nowrap"
+          style={{ left: templateTooltip.x, top: templateTooltip.y }}
+        >
+          <div className="font-mono leading-tight">{templateTooltip.templateId}</div>
+          {templateTooltip.templateKey && (
+            <div className="text-white/55 mt-0.5 leading-tight">{templateTooltip.templateKey}</div>
+          )}
+        </div>
       )}
     </div>
   );
