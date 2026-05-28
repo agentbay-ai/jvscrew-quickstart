@@ -17,8 +17,7 @@ import type { WorkspaceFile } from '../types/files';
 
 const PAGE_SIZE = 50;
 
-// 上传功能依赖后端 GetWorkspaceFileUploadUrl 接口，目前后端 bug 未修复，先隐藏入口
-const UPLOAD_ENABLED = false;
+const UPLOAD_ENABLED = true;
 
 const AVATARS = [
   'https://img.alicdn.com/imgextra/i2/6000000006913/O1CN017tneP620wD8kVZFDn_!!6000000006913-2-gg_dtc.png',
