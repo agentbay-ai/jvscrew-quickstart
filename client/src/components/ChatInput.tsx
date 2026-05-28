@@ -66,6 +66,19 @@ export default function ChatInput({
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    const named = files.map((f) => {
+      if (f.name && f.name !== 'image.png') return f;
+      const ext = f.type.split('/')[1] || 'png';
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      return new File([f], `pasted-${ts}.${ext}`, { type: f.type });
+    });
+    addAttachedFiles(named);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     addAttachedFiles(files);
@@ -159,6 +172,7 @@ export default function ChatInput({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="你想让我做什么"
             rows={1}
             disabled={disabled}
