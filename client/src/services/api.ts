@@ -361,6 +361,14 @@ export async function uploadFileToOSS(
   });
 }
 
+export async function warmWorkspace(
+  token: string,
+  templateId?: string,
+): Promise<{ Success: boolean; Status?: string; Code?: string; Message?: string }> {
+  const res = await jwtFetch('WarmWorkspace', {}, token, templateId);
+  return res.json();
+}
+
 export async function syncContext(config: AuthConfig, fileKey: string) {
   const res = await fetch('/api/file/sync', {
     method: 'POST',

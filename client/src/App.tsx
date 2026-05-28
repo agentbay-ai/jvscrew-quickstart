@@ -2,11 +2,13 @@ import { useEffect, useRef } from 'react';
 import { useAuthStore } from './stores/authStore';
 import LoginPage from './pages/LoginPage';
 import ConsolePage from './pages/ConsolePage';
+import { prewarmWorkspace } from './utils/prewarm';
 
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isLoading = useAuthStore((s) => s.isLoading);
   const login = useAuthStore((s) => s.login);
+  const templateId = useAuthStore((s) => s.config?.templateId);
   const restored = useRef(false);
 
   useEffect(() => {
@@ -22,6 +24,11 @@ export default function App() {
       }
     } catch { /* ignore */ }
   }, [isAuthenticated, login]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void prewarmWorkspace(templateId);
+  }, [isAuthenticated, templateId]);
 
   if (isLoading) {
     return (

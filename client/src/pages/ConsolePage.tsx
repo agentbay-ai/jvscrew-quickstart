@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import NavSidebar from '../components/NavSidebar';
 import SessionPanel from '../components/SessionPanel';
 import ChatArea from '../components/ChatArea';
@@ -16,6 +16,7 @@ import { useScheduledTaskRunPolling } from '../hooks/useScheduledTaskRuns';
 import { useAuthStore } from '../stores/authStore';
 import { useSandboxStore } from '../stores/sandboxStore';
 import type { ExpertTemplate } from '../types/api';
+import { prewarmWorkspace } from '../utils/prewarm';
 
 export default function ConsolePage() {
   const [activeTab, setActiveTab] = useState('chat');
@@ -29,6 +30,10 @@ export default function ConsolePage() {
     isPolling,
   } = useSandboxStore();
   useScheduledTaskRunPolling(true);
+
+  useEffect(() => {
+    void prewarmWorkspace(config?.templateId);
+  }, [activeTab, config?.templateId]);
 
   const handleStartChat = (expert: ExpertTemplate) => {
     setSelectedExpert(expert.id ? expert : null);
