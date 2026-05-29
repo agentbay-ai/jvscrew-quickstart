@@ -274,6 +274,72 @@ export interface DeleteAgentEnvVarResponse {
   DeletedKeys: string[];
 }
 
+export type McpTransport = 'streamable_http' | 'sse';
+export type McpPreference = 'enabled' | 'disabled' | 'default';
+export type McpSource = 'template' | 'user_persistent';
+export type McpSourceFilter = 'all' | 'template' | 'user_persistent';
+
+export interface McpItem {
+  McpId: string;
+  Name: string;
+  Description?: string | null;
+  Transport: McpTransport;
+  Url: string;
+  Source: McpSource;
+  IsEffective: boolean;
+  Preference?: McpPreference | null;
+  TemplateDefault?: boolean | null;
+  IsCredentialBound?: boolean | null;
+  Headers?: Record<string, string> | null;
+}
+
+export interface ListUserMcpsResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  Mcps: McpItem[];
+  NextToken?: string;
+  MaxResults?: number;
+}
+
+export interface UserMcpDetail {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  McpId: string;
+  Name: string;
+  Transport: McpTransport;
+  Url: string;
+  Headers?: Record<string, string> | null;
+  Description?: string | null;
+  Timeout: number;
+  SseReadTimeout: number;
+  IsEnabled: boolean;
+  CreateTime: string;
+  ModifyTime: string;
+}
+
+export interface CreateUserMcpInput {
+  Name: string;
+  Transport: McpTransport;
+  Url: string;
+  Headers?: Record<string, string>;
+  Description?: string;
+  Timeout?: number;
+  SseReadTimeout?: number;
+}
+
+export interface UpdateUserMcpInput {
+  Name?: string;
+  Transport?: McpTransport;
+  Url?: string;
+  Headers?: Record<string, string>;
+  Description?: string;
+  Timeout?: number;
+  SseReadTimeout?: number;
+  IsEnabled?: boolean;
+}
+
 export interface ToolCallInfo {
   name: string;
   status: 'calling' | 'completed';

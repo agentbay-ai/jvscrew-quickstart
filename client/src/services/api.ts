@@ -361,6 +361,142 @@ export async function uploadFileToOSS(
   });
 }
 
+export async function listUserMcps(
+  token: string,
+  templateId?: string,
+  source: import('../types/api').McpSourceFilter = 'all',
+  maxResults = 50,
+): Promise<import('../types/api').ListUserMcpsResponse> {
+  const items: import('../types/api').McpItem[] = [];
+  let nextToken: string | undefined;
+  do {
+    const body: Record<string, unknown> = { Source: source, MaxResults: maxResults };
+    if (nextToken) body.NextToken = nextToken;
+    const res = await jwtFetch('ListUserMcps', body, token, templateId);
+    const data = await res.json();
+    if (!res.ok || data.Success === false) {
+      throw new Error(data.Message || data.Code || 'Failed to list MCPs');
+    }
+    if (Array.isArray(data.Mcps)) items.push(...data.Mcps);
+    nextToken = data.NextToken && data.NextToken.length > 0 ? data.NextToken : undefined;
+  } while (nextToken);
+  return { Success: true, Mcps: items, MaxResults: maxResults };
+}
+
+export async function setUserMcpPreference(
+  token: string,
+  mcpId: string,
+  preference: import('../types/api').McpPreference,
+  templateId?: string,
+) {
+  const res = await jwtFetch(
+    'SetUserMcpPreference',
+    { McpId: mcpId, Preference: preference },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to set MCP preference');
+  }
+  return data;
+}
+
+export async function setUserMcpCredential(
+  token: string,
+  mcpId: string,
+  headers: Record<string, string>,
+  templateId?: string,
+) {
+  const res = await jwtFetch(
+    'SetUserMcpCredential',
+    { McpId: mcpId, Headers: headers },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to set MCP credential');
+  }
+  return data;
+}
+
+export async function clearUserMcpCredential(
+  token: string,
+  mcpId: string,
+  templateId?: string,
+) {
+  const res = await jwtFetch(
+    'ClearUserMcpCredential',
+    { McpId: mcpId },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to clear MCP credential');
+  }
+  return data;
+}
+
+export async function createUserMcp(
+  token: string,
+  payload: import('../types/api').CreateUserMcpInput,
+  templateId?: string,
+): Promise<import('../types/api').UserMcpDetail> {
+  const res = await jwtFetch('CreateUserMcp', payload, token, templateId);
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to create user MCP');
+  }
+  return data;
+}
+
+export async function updateUserMcp(
+  token: string,
+  mcpId: string,
+  partial: import('../types/api').UpdateUserMcpInput,
+  templateId?: string,
+): Promise<import('../types/api').UserMcpDetail> {
+  const res = await jwtFetch(
+    'UpdateUserMcp',
+    { McpId: mcpId, ...partial },
+    token,
+    templateId,
+  );
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to update user MCP');
+  }
+  return data;
+}
+
+export async function deleteUserMcp(
+  token: string,
+  mcpId: string,
+  templateId?: string,
+) {
+  const res = await jwtFetch('DeleteUserMcp', { McpId: mcpId }, token, templateId);
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to delete user MCP');
+  }
+  return data;
+}
+
+export async function getUserMcp(
+  token: string,
+  mcpId: string,
+  templateId?: string,
+): Promise<import('../types/api').UserMcpDetail> {
+  const res = await jwtFetch('GetUserMcp', { McpId: mcpId }, token, templateId);
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || 'Failed to get user MCP');
+  }
+  return data;
+}
+
 export async function warmWorkspace(
   token: string,
   templateId?: string,

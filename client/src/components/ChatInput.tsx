@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { SkillItem } from '../types/api';
 import EnvVarsPopover from './EnvVarsPopover';
+import McpPopover from './McpPopover';
 import WechatBindPopover from './WechatBindPopover';
 
 const MAX_TEXTAREA_HEIGHT = 240;
@@ -34,12 +35,15 @@ export default function ChatInput({
   const [showOptions, setShowOptions] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
   const [showEnvVars, setShowEnvVars] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
   const [showWechat, setShowWechat] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
   const optionsRef = useRef<HTMLDivElement>(null);
   const skillsRef = useRef<HTMLDivElement>(null);
   const envVarsRef = useRef<HTMLDivElement>(null);
+  const mcpRef = useRef<HTMLDivElement>(null);
   const wechatRef = useRef<HTMLDivElement>(null);
 
   // Auto-grow textarea based on content height.
@@ -59,11 +63,16 @@ export default function ChatInput({
     clearAttachedFiles();
   }, [text, attachedFiles, onSend, setText, clearAttachedFiles]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    // 输入法（中文拼音、日文等）正在合成候选词时不要发送：
+    // 1) React 17+ 的 isComposing 标志
+    // 2) 浏览器在 IME 期间统一上报 keyCode 229
+    // 3) 自维护 ref（兼容部分浏览器在选词回车时 isComposing 已变 false 但事件链仍属于合成尾的情况）
+    const native = e.nativeEvent as KeyboardEvent;
+    if (native.isComposing || native.keyCode === 229 || isComposingRef.current) return;
+    e.preventDefault();
+    handleSubmit();
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -90,24 +99,30 @@ export default function ChatInput({
   };
 
   useEffect(() => {
-    if (!showOptions && !showSkillsMenu && !showEnvVars && !showWechat) return;
+    if (!showOptions && !showSkillsMenu && !showEnvVars && !showMcp && !showWechat) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (showOptions && optionsRef.current && !optionsRef.current.contains(e.target as Node)) {
+      const target = e.target as HTMLElement | null;
+      // 通过 portal 渲染到 body 的弹层不在原始 ref 容器内，需要单独排除
+      const inPortal = target?.closest?.('[data-popover-portal]');
+      if (showOptions && optionsRef.current && !optionsRef.current.contains(target)) {
         setShowOptions(false);
       }
-      if (showSkillsMenu && skillsRef.current && !skillsRef.current.contains(e.target as Node)) {
+      if (showSkillsMenu && skillsRef.current && !skillsRef.current.contains(target)) {
         setShowSkillsMenu(false);
       }
-      if (showEnvVars && envVarsRef.current && !envVarsRef.current.contains(e.target as Node)) {
+      if (showEnvVars && envVarsRef.current && !envVarsRef.current.contains(target) && inPortal?.getAttribute('data-popover-portal') !== 'env-vars') {
         setShowEnvVars(false);
       }
-      if (showWechat && wechatRef.current && !wechatRef.current.contains(e.target as Node)) {
+      if (showMcp && mcpRef.current && !mcpRef.current.contains(target) && inPortal?.getAttribute('data-popover-portal') !== 'mcp') {
+        setShowMcp(false);
+      }
+      if (showWechat && wechatRef.current && !wechatRef.current.contains(target)) {
         setShowWechat(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showOptions, showSkillsMenu, showEnvVars, showWechat]);
+  }, [showOptions, showSkillsMenu, showEnvVars, showMcp, showWechat]);
 
   const handleSelectSkill = useCallback((skill: SkillItem) => {
     const prev = useChatStore.getState().draftText;
@@ -173,6 +188,8 @@ export default function ChatInput({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder="你想让我做什么"
             rows={1}
             disabled={disabled}
@@ -203,47 +220,6 @@ export default function ChatInput({
               </svg>
             </button>
 
-            <div className="relative" ref={envVarsRef}>
-              <button
-                onClick={() => setShowEnvVars(!showEnvVars)}
-                className={`p-1.5 rounded-lg transition ${
-                  showEnvVars
-                    ? 'text-primary bg-primary/10'
-                    : 'text-text-muted hover:bg-gray-100'
-                }`}
-                title="环境变量"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-                    d="M8 4H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1M16 4h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" />
-                </svg>
-              </button>
-              {showEnvVars && (
-                <EnvVarsPopover onClose={() => setShowEnvVars(false)} />
-              )}
-            </div>
-
-            <div className="relative" ref={wechatRef}>
-              <button
-                onClick={() => setShowWechat(!showWechat)}
-                className={`p-1.5 rounded-lg transition ${
-                  showWechat
-                    ? 'text-emerald-600 bg-emerald-50'
-                    : 'text-text-muted hover:bg-gray-100'
-                }`}
-                title="绑定微信"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M3 7a4 4 0 014-4h6a4 4 0 014 4v4a4 4 0 01-4 4h-2l-3 3v-3H7a4 4 0 01-4-4V7z" />
-                  <circle cx="8.5" cy="8.5" r="0.75" fill="currentColor" />
-                  <circle cx="12" cy="8.5" r="0.75" fill="currentColor" />
-                </svg>
-              </button>
-              {showWechat && (
-                <WechatBindPopover onClose={() => setShowWechat(false)} />
-              )}
-            </div>
             {skills && skills.length > 0 && (
               <div className="relative" ref={skillsRef}>
                 <button
@@ -278,6 +254,68 @@ export default function ChatInput({
                 )}
               </div>
             )}
+
+            <div className="relative" ref={mcpRef}>
+              <button
+                onClick={() => setShowMcp(!showMcp)}
+                className={`p-1.5 rounded-lg transition ${
+                  showMcp
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`}
+                title="MCP 工具"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M14.7 6.3a3 3 0 0 1 4.243 4.243l-7.07 7.07a4.5 4.5 0 0 1-6.364-6.364l7.778-7.778a6 6 0 0 1 8.485 8.485L13.06 20.475" />
+                </svg>
+              </button>
+              {showMcp && (
+                <McpPopover onClose={() => setShowMcp(false)} anchorRef={mcpRef} />
+              )}
+            </div>
+
+            <div className="relative" ref={envVarsRef}>
+              <button
+                onClick={() => setShowEnvVars(!showEnvVars)}
+                className={`p-1.5 rounded-lg transition ${
+                  showEnvVars
+                    ? 'text-primary bg-primary/10'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`}
+                title="环境变量"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                    d="M8 4H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1M16 4h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" />
+                </svg>
+              </button>
+              {showEnvVars && (
+                <EnvVarsPopover onClose={() => setShowEnvVars(false)} anchorRef={envVarsRef} />
+              )}
+            </div>
+
+            <div className="relative" ref={wechatRef}>
+              <button
+                onClick={() => setShowWechat(!showWechat)}
+                className={`p-1.5 rounded-lg transition ${
+                  showWechat
+                    ? 'text-emerald-600 bg-emerald-50'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`}
+                title="绑定微信"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 7a4 4 0 014-4h6a4 4 0 014 4v4a4 4 0 01-4 4h-2l-3 3v-3H7a4 4 0 01-4-4V7z" />
+                  <circle cx="8.5" cy="8.5" r="0.75" fill="currentColor" />
+                  <circle cx="12" cy="8.5" r="0.75" fill="currentColor" />
+                </svg>
+              </button>
+              {showWechat && (
+                <WechatBindPopover onClose={() => setShowWechat(false)} />
+              )}
+            </div>
 
             {/* Stream options button */}
             {hasAnyOption && (

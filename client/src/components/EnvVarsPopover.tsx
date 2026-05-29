@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import {
   deleteAgentEnvVars,
   listAllAgentEnvVars,
@@ -6,9 +7,11 @@ import {
 } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import type { AgentEnvVarSummary } from '../types/api';
+import { usePopoverPosition } from '../utils/usePopoverPosition';
 
 interface EnvVarsPopoverProps {
   onClose: () => void;
+  anchorRef: RefObject<HTMLElement | null>;
 }
 
 type Mode = { type: 'list' } | { type: 'form'; presetKey?: string; presetDesc?: string };
@@ -24,7 +27,8 @@ async function ensureToken(): Promise<string | null> {
   return state.accessToken ?? (await state.refreshAccessToken());
 }
 
-export default function EnvVarsPopover({ onClose }: EnvVarsPopoverProps) {
+export default function EnvVarsPopover({ onClose, anchorRef }: EnvVarsPopoverProps) {
+  const pos = usePopoverPosition(anchorRef);
   const templateId = useAuthStore((s) => s.config?.templateId);
   const [vars, setVars] = useState<AgentEnvVarSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -140,8 +144,14 @@ export default function EnvVarsPopover({ onClose }: EnvVarsPopoverProps) {
 
   const isForm = mode.type === 'form';
 
-  return (
-    <div className="absolute bottom-full left-0 mb-2 w-[380px] bg-white rounded-2xl border border-gray-200 shadow-xl z-50 flex flex-col overflow-hidden max-h-[480px]">
+  if (!pos) return null;
+
+  return createPortal(
+    <div
+      data-popover-portal="env-vars"
+      style={{ position: 'fixed', left: pos.left, bottom: pos.bottom }}
+      className="w-[380px] bg-white rounded-2xl border border-gray-200 shadow-xl z-[60] flex flex-col overflow-hidden max-h-[480px]"
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2.5">
         <div className="flex items-center gap-2 min-w-0">
@@ -385,6 +395,7 @@ export default function EnvVarsPopover({ onClose }: EnvVarsPopoverProps) {
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
