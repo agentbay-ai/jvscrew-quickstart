@@ -222,43 +222,106 @@ function DocxRenderer({ arrayBuffer }: { arrayBuffer: ArrayBuffer }) {
   return <div ref={containerRef} className="w-full min-h-[300px]" />;
 }
 
-function FilePreviewModal({ state, onClose, onDownload }: {
+function FilePreviewModal({ state, externalUserId, templateId, onClose, onDownload, onSaved }: {
   state: PreviewState;
+  externalUserId?: string;
+  templateId?: string;
   onClose: () => void;
   onDownload: () => void;
+  onSaved: (newContent: string) => void;
 }) {
   const isMarkdown = useMemo(() => {
     const ext = state.file.FileName.split('.').pop()?.toLowerCase();
     return ext === 'md' || ext === 'markdown';
   }, [state.file.FileName]);
 
-  const [viewMode, setViewMode] = useState<'preview' | 'source'>('preview');
+  const [viewMode, setViewMode] = useState<'preview' | 'source' | 'edit'>('preview');
+  const [draft, setDraft] = useState<string>(state.content ?? '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [savedFlash, setSavedFlash] = useState(false);
   const isRichPreview = state.type === 'pdf' || state.type === 'docx';
+  const dirty = viewMode === 'edit' && draft !== (state.content ?? '');
+
+  // 内容变化（重新打开预览时）刷新草稿
+  useEffect(() => { setDraft(state.content ?? ''); }, [state.content, state.file.FilePath]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (dirty && !window.confirm('有未保存的修改，确认放弃？')) return;
+        onClose();
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, dirty]);
+
+  const handleSave = async () => {
+    if (!externalUserId || !templateId) {
+      setSaveError('缺少用户或模板上下文');
+      return;
+    }
+    setIsSaving(true);
+    setSaveError('');
+    try {
+      // 同名覆盖：FilePath 去除前导 / 即得相对路径
+      const filePath = state.file.FilePath.replace(/^\/+/, '');
+      const urlResp = await getWorkspaceFileUploadUrl({
+        externalUserId,
+        filePath,
+        templateId,
+      });
+      const blob = new Blob([draft], { type: 'text/markdown' });
+      const fileToUpload = new File([blob], state.file.FileName, { type: 'text/markdown' });
+      if (urlResp.MaxFileSize && fileToUpload.size > urlResp.MaxFileSize) {
+        throw new Error(`文件超出上限 ${(urlResp.MaxFileSize / 1024 / 1024).toFixed(0)} MB`);
+      }
+      await putFileToPresignedUrl(urlResp.UploadUrl, fileToUpload, urlResp.UploadHeadersHint);
+      onSaved(draft);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1800);
+      // 保存后留在预览，方便确认改动
+      setViewMode('preview');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const requestClose = () => {
+    if (dirty && !window.confirm('有未保存的修改，确认放弃？')) return;
+    onClose();
+  };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}
     >
       <div className={`bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden ${
         isRichPreview
           ? 'w-[960px] max-w-[95vw] h-[85vh]'
-          : 'w-[720px] max-w-[90vw] max-h-[80vh]'
+          : 'w-[820px] max-w-[92vw] h-[80vh]'
       }`}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 shrink-0">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 shrink-0 gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <FileIcon fileName={state.file.FileName} />
             <span className="text-sm font-medium text-black truncate">{state.file.FileName}</span>
             <span className="text-xs text-black/40 shrink-0">{formatBytes(state.file.Size)}</span>
+            {dirty && (
+              <span className="text-[11px] text-amber-600 shrink-0">· 未保存</span>
+            )}
+            {savedFlash && (
+              <span className="text-[11px] text-emerald-600 shrink-0 inline-flex items-center gap-0.5">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+                已保存
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {isMarkdown && (
@@ -275,7 +338,28 @@ function FilePreviewModal({ state, onClose, onDownload }: {
                 >
                   源码
                 </button>
+                <button
+                  onClick={() => setViewMode('edit')}
+                  className={`px-2 py-1 rounded-md text-xs font-medium transition ${viewMode === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-black/50 hover:text-black/70'}`}
+                >
+                  编辑
+                </button>
               </div>
+            )}
+            {isMarkdown && viewMode === 'edit' && (
+              <button
+                onClick={handleSave}
+                disabled={isSaving || !dirty}
+                className="px-3 py-1 rounded-md bg-primary text-white text-xs font-medium hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1"
+              >
+                {isSaving && (
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                    <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
+                {isSaving ? '保存中...' : '保存'}
+              </button>
             )}
             <button
               onClick={onDownload}
@@ -284,7 +368,7 @@ function FilePreviewModal({ state, onClose, onDownload }: {
               下载
             </button>
             <button
-              onClick={onClose}
+              onClick={requestClose}
               className="p-1 rounded hover:bg-gray-100 text-black/40 hover:text-black transition"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -294,8 +378,19 @@ function FilePreviewModal({ state, onClose, onDownload }: {
           </div>
         </div>
 
+        {saveError && (
+          <div className="px-5 py-2 bg-red-50 border-b border-red-100 text-xs text-red-600 flex items-center justify-between shrink-0">
+            <span className="break-all">{saveError}</span>
+            <button onClick={() => setSaveError('')} className="ml-2 text-red-400 hover:text-red-600 shrink-0">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         {/* Content */}
-        <div className={`flex-1 min-h-0 ${state.type === 'pdf' ? '' : 'overflow-auto p-5'}`}>
+        <div className={`flex-1 min-h-0 ${state.type === 'pdf' ? '' : viewMode === 'edit' ? '' : 'overflow-auto p-5'}`}>
           {state.loading && (
             <div className="flex items-center justify-center h-32 text-sm text-text-hint">加载中...</div>
           )}
@@ -309,7 +404,15 @@ function FilePreviewModal({ state, onClose, onDownload }: {
             <DocxRenderer arrayBuffer={state.arrayBuffer} />
           )}
           {!state.loading && !state.error && state.type === 'text' && state.content !== null && (
-            isMarkdown && viewMode === 'preview' ? (
+            isMarkdown && viewMode === 'edit' ? (
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+                className="w-full h-full px-5 py-4 text-[13px] leading-5 text-black/80 font-mono resize-none focus:outline-none border-0"
+                placeholder="编辑 Markdown 内容..."
+              />
+            ) : isMarkdown && viewMode === 'preview' ? (
               <div className="prose prose-sm max-w-none text-black/80">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{state.content}</ReactMarkdown>
               </div>
@@ -944,11 +1047,30 @@ export default function FilesView() {
       {preview && (
         <FilePreviewModal
           state={preview}
+          externalUserId={config?.externalUserId}
+          templateId={selectedTemplateId}
           onClose={() => {
             if (preview.type === 'pdf' && preview.url) URL.revokeObjectURL(preview.url.split('#')[0]);
             setPreview(null);
           }}
           onDownload={() => { void handleDownload(preview.file); }}
+          onSaved={(newContent) => {
+            // 保存成功后：原地更新预览内容、字节大小，并刷新列表（更新 ModifiedAt 等）
+            setPreview((prev) => prev ? {
+              ...prev,
+              content: newContent,
+              file: { ...prev.file, Size: new Blob([newContent]).size },
+            } : prev);
+            setFiles((prevFiles) => prevFiles.map((f) =>
+              f.FilePath === preview.file.FilePath
+                ? { ...f, Size: new Blob([newContent]).size, ModifiedAt: new Date().toISOString() }
+                : f,
+            ));
+            // 后台同步真实元数据（异步即可，不阻塞 UI）
+            if (selectedTemplateId) {
+              void loadFiles(selectedTemplateId, currentPath, pageNumber);
+            }
+          }}
         />
       )}
 
