@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { DisplayMessage, ToolCallInfo } from '../types/api';
+import LatencyPopover from './LatencyPopover';
 
 interface MessageBubbleProps {
   message: DisplayMessage;
@@ -52,6 +53,20 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const isReasoningPhase = message.isStreaming && message.reasoning && !message.content;
   const [showReasoning, setShowReasoning] = useState(isReasoningPhase ?? false);
   const [copied, setCopied] = useState(false);
+  const [showLatency, setShowLatency] = useState(false);
+  const latencyBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!showLatency) return;
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('[data-popover-portal="latency"]')) return;
+      if (latencyBtnRef.current?.contains(t)) return;
+      setShowLatency(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showLatency]);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const parsed = parseSandboxPathSection(message.content);
@@ -153,30 +168,58 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Copy button for AI messages */}
+        {/* Copy + latency buttons for AI messages */}
         {!isUser && content && !message.isStreaming && (
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-text-hint hover:text-text-muted hover:bg-gray-100 transition"
-            title="复制原始文本"
-          >
-            {copied ? (
-              <>
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>已复制</span>
-              </>
-            ) : (
-              <>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-text-hint hover:text-text-muted hover:bg-gray-100 transition"
+              title="复制原始文本"
+            >
+              {copied ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>已复制</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                      d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                  </svg>
+                  <span>复制</span>
+                </>
+              )}
+            </button>
+            {message.latency?.endAt != null && (
+              <button
+                ref={latencyBtnRef}
+                onClick={() => setShowLatency((v) => !v)}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition ${
+                  showLatency ? 'text-primary bg-primary/10' : 'text-text-hint hover:text-text-muted hover:bg-gray-100'
+                }`}
+                title="耗时统计"
+              >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                    d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
-                <span>复制</span>
-              </>
+                <span>耗时</span>
+                <span className="font-mono tabular-nums text-[10px] opacity-70">
+                  {((message.latency.endAt - message.latency.startAt) / 1000).toFixed(2)}s
+                </span>
+              </button>
             )}
-          </button>
+            {showLatency && message.latency && (
+              <LatencyPopover
+                latency={message.latency}
+                anchorRef={latencyBtnRef}
+                onClose={() => setShowLatency(false)}
+              />
+            )}
+          </div>
         )}
 
         {/* Files */}

@@ -347,6 +347,13 @@ export interface ToolCallInfo {
   output?: string;
 }
 
+export interface MessageLatency {
+  startAt: number;                 // 用户发送 ms 时间戳
+  firstAnyAt?: number;             // 首个有效内容字节（reasoning/content/tool_use 任一）
+  firstAnswerAt?: number;          // 首个最终回答正文字节（剔除 reasoning / tool）
+  endAt?: number;                  // 最后一个可见字节时间（不依赖后端 completed 事件延迟）
+}
+
 export interface DisplayMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -356,4 +363,5 @@ export interface DisplayMessage {
   timestamp: number;
   files?: { name: string; url: string }[];
   toolCalls?: ToolCallInfo[];
+  latency?: MessageLatency;
 }

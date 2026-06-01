@@ -130,13 +130,22 @@ export function useChat() {
       };
       useChatStore.getState().addMessageTo(streamSessionId, userMsg);
 
+      const sentAt = Date.now();
+      const latency = { startAt: sentAt } as {
+        startAt: number;
+        firstAnyAt?: number;
+        firstAnswerAt?: number;
+        endAt?: number;
+      };
+      let lastByteAt: number | null = null;
       const assistantMsg: DisplayMessage = {
-        id: `assistant-${Date.now()}`,
+        id: `assistant-${sentAt}`,
         role: 'assistant',
         content: '',
         reasoning: '',
         isStreaming: true,
-        timestamp: Date.now(),
+        timestamp: sentAt,
+        latency: { ...latency },
       };
       useChatStore.getState().addMessageTo(streamSessionId, assistantMsg);
 
@@ -153,12 +162,22 @@ export function useChat() {
       let activeSessionId = streamSessionId;
       let streamingFlagged = true;
 
+      const markLatency = (key: 'firstAnyAt' | 'firstAnswerAt') => {
+        if (latency[key] != null) return;
+        latency[key] = Date.now();
+        useChatStore.getState().updateLastAssistantOf(activeSessionId, { latency: { ...latency } });
+      };
+
+      // 每个真实 byte 到达时刷新；finishStreaming 时把它作为 TTLB，避免被后端 completed 事件的延迟污染
+      const touchLastByte = () => { lastByteAt = Date.now(); };
+
       const finishStreaming = () => {
         if (!streamingFlagged) return;
         streamingFlagged = false;
+        latency.endAt = lastByteAt ?? Date.now();
         const s = useChatStore.getState();
         s.finalizeAllToolCallsOf(activeSessionId);
-        s.updateLastAssistantOf(activeSessionId, { isStreaming: false });
+        s.updateLastAssistantOf(activeSessionId, { isStreaming: false, latency: { ...latency } });
         s.setStreamingFor(activeSessionId, false);
         s.setAbortControllerFor(activeSessionId, null);
       };
@@ -191,25 +210,34 @@ export function useChat() {
 
           if (obj === 'content' && type === 'text' && status === 'in_progress') {
             const txt = event.Text || '';
+            if (txt) {
+              markLatency('firstAnyAt');
+              touchLastByte();
+            }
             if (currentPhase === 'reasoning') {
               s.appendToLastAssistantOf(activeSessionId, 'reasoning', txt);
             } else if (currentPhase === 'message') {
+              if (txt) markLatency('firstAnswerAt');
               s.appendToLastAssistantOf(activeSessionId, 'content', txt);
             }
           }
 
           if (obj === 'message' && (type === 'plugin_call' || type === 'tool_call')) {
             if (status === 'in_progress') {
+              markLatency('firstAnyAt');
+              touchLastByte();
               const data = event.Content?.[0] as unknown as { Data?: { name?: string; input?: string } } | undefined;
               const name = data?.Data?.name || type;
               const input = data?.Data?.input;
               s.addToolCallTo(activeSessionId, { name, status: 'calling', input });
             } else if (status === 'completed') {
+              touchLastByte();
               s.updateLastToolCallOf(activeSessionId, { status: 'completed' });
             }
           }
 
           if (obj === 'message' && type === 'plugin_call_output' && status === 'completed') {
+            touchLastByte();
             const data = event.Content?.[0] as unknown as { Data?: { output?: string } } | undefined;
             if (data?.Data?.output) {
               s.updateLastToolCallOf(activeSessionId, { status: 'completed', output: data.Data.output });
