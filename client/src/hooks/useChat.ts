@@ -249,6 +249,13 @@ export function useChat() {
             activeSessionId = event.SessionId;
           }
 
+          // 提前解锁：message 阶段完成 = 模型已经写完最后一个字。
+          // 不等 response.completed（后端可能再延迟 ~2s 才发），用户能立即发下一条。
+          if (obj === 'message' && type === 'message' && status === 'completed') {
+            finishStreaming();
+          }
+
+          // 兜底：万一上面没触发（如纯 reasoning 不出 message 的极端情况）
           if (obj === 'response' && status === 'completed') {
             finishStreaming();
           }
