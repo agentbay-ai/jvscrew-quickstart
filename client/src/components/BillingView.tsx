@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { getMyConsumption, getMyCreditRecords } from '../services/billing';
+import { listTemplates } from '../services/api';
 import type { CreditRecord, UserConsumption } from '../types/billing';
+import type { TemplateItem } from '../types/api';
 
 const PAGE_SIZE = 20;
 
@@ -35,7 +37,6 @@ function errorText(err: unknown): string {
 
 export default function BillingView() {
   const externalUserId = useAuthStore((s) => s.config?.externalUserId);
-  const templateId = useAuthStore((s) => s.config?.templateId);
 
   // Default: today minus 29 days → today (30-day window)
   const [fromDate, setFromDate] = useState(() => {
@@ -44,7 +45,26 @@ export default function BillingView() {
     return formatDateInput(d);
   });
   const [toDate, setToDate] = useState(() => formatDateInput(new Date()));
-  const [scopeAllTemplates, setScopeAllTemplates] = useState(true);
+  // 空字符串 = 全部 Agent
+  const [filterTemplateId, setFilterTemplateId] = useState('');
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listTemplates().then((data) => {
+      if (cancelled) return;
+      setTemplates(data.Items);
+    }).catch(() => { /* 模板拉不到不阻塞 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const templateNameMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const t of templates) {
+      m[t.TemplateId] = t.TemplateKey || t.TemplateId;
+    }
+    return m;
+  }, [templates]);
 
   const [consumption, setConsumption] = useState<UserConsumption | null>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
@@ -84,7 +104,7 @@ export default function BillingView() {
         externalUserId,
         fromDate,
         toDate,
-        templateId: scopeAllTemplates ? undefined : templateId,
+        templateId: filterTemplateId || undefined,
         pageSize: PAGE_SIZE,
         pageNumber: page,
       });
@@ -100,7 +120,7 @@ export default function BillingView() {
     } finally {
       setIsLoadingRecords(false);
     }
-  }, [externalUserId, fromDate, toDate, scopeAllTemplates, templateId]);
+  }, [externalUserId, fromDate, toDate, filterTemplateId]);
 
   useEffect(() => {
     void loadSummary();
@@ -196,17 +216,19 @@ export default function BillingView() {
                 className="rounded-md border border-gray-200 px-2 py-1 focus:outline-none focus:border-primary"
               />
             </div>
-            {templateId && (
-              <label className="flex items-center gap-1.5 text-[11px] text-black/60 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={scopeAllTemplates}
-                  onChange={(e) => setScopeAllTemplates(e.target.checked)}
-                  className="accent-[#2F3A80]"
-                />
-                全部 Agent（取消勾选则只看当前模板）
-              </label>
-            )}
+            <select
+              value={filterTemplateId}
+              onChange={(e) => setFilterTemplateId(e.target.value)}
+              className="rounded-md border border-gray-200 px-2 py-1 text-[11px] text-black/70 bg-white focus:outline-none focus:border-primary"
+              title="按 Agent 模板筛选"
+            >
+              <option value="">全部 Agent</option>
+              {templates.map((t) => (
+                <option key={t.TemplateId} value={t.TemplateId}>
+                  {t.TemplateKey || t.TemplateId}
+                </option>
+              ))}
+            </select>
             <button
               onClick={() => void loadRecords(1)}
               disabled={isLoadingRecords}
@@ -265,7 +287,9 @@ export default function BillingView() {
                   >
                     <div className="text-black/60">{formatDateTime(r.CreatedAt)}</div>
                     <div className="truncate font-mono text-black/70" title={r.SessionId}>{r.SessionId}</div>
-                    <div className="truncate font-mono text-black/60" title={r.TemplateId || ''}>{r.TemplateId || '-'}</div>
+                    <div className="truncate text-black/70" title={r.TemplateId || ''}>
+                      {r.TemplateId ? (templateNameMap[r.TemplateId] || r.TemplateId) : '-'}
+                    </div>
                     <div className="text-right font-medium text-black">{r.CreditAmount.toFixed(2)}</div>
                     <div className="text-right text-black/60">{formatDurationMs(r.DurationMs)}</div>
                     <div className="truncate font-mono text-black/40" title={r.TraceId}>{r.TraceId}</div>

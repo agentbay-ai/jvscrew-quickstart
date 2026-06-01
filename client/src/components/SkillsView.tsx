@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { listSkills, listUserSkills } from '../services/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { listSkills, listTemplates, listUserSkills } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
-import type { SkillItem, UserSkill } from '../types/api';
+import type { SkillItem, TemplateItem, UserSkill } from '../types/api';
+import SkillTemplatePicker from './SkillTemplatePicker';
 
 const USER_SKILL_PREFIX = 'user:';
 const USER_SKILL_ICON = '🧩';
@@ -115,18 +116,24 @@ function SkillDetailModal({ skill, onClose }: { skill: SkillItem; onClose: () =>
 
 function SkillCard({
   skill,
+  templates,
   onShowDetail,
+  onPreferenceChanged,
 }: {
   skill: SkillItem;
+  templates: TemplateItem[];
   onShowDetail: () => void;
+  onPreferenceChanged?: (skill: SkillItem, template: TemplateItem, enabled: boolean) => void;
 }) {
   const userSkill = isUserSkill(skill.SkillId);
   const isMarket = !userSkill && (skill.SkillId.startsWith('market:') || skill.SkillId.startsWith('custom:'));
+  const [showPicker, setShowPicker] = useState(false);
+  const plusBtnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
       onClick={onShowDetail}
-      className={`rounded-[20px] flex flex-row items-center gap-3 px-4 min-h-[80px] overflow-hidden transition cursor-pointer
+      className={`relative rounded-[20px] flex flex-row items-center gap-3 px-4 min-h-[80px] overflow-visible transition cursor-pointer
         ${userSkill
           ? 'bg-white shadow-[inset_0_0_0_1px_#2F3A8033] hover:shadow-[inset_0_0_0_1px_#2F3A8066]'
           : isMarket
@@ -163,6 +170,34 @@ function SkillCard({
         </div>
         <span className="text-xs text-black/60 truncate">{skill.Description || (userSkill ? '用户自建技能' : '')}</span>
       </div>
+
+      {!userSkill && (
+        <button
+          ref={plusBtnRef}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setShowPicker((v) => !v); }}
+          className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition ${
+            showPicker
+              ? 'bg-primary/10 text-primary'
+              : 'bg-[#F5F6FA] text-black/55 hover:bg-primary/10 hover:text-primary'
+          }`}
+          title="在其他模板上启用此技能"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+      )}
+
+      {showPicker && !userSkill && (
+        <SkillTemplatePicker
+          anchorRef={plusBtnRef}
+          templates={templates}
+          skillId={skill.SkillId}
+          onClose={() => setShowPicker(false)}
+          onChanged={(template, enabled) => onPreferenceChanged?.(skill, template, enabled)}
+        />
+      )}
     </div>
   );
 }
@@ -171,9 +206,29 @@ export default function SkillsView() {
   const templateId = useAuthStore((s) => s.config?.templateId);
   const externalUserId = useAuthStore((s) => s.config?.externalUserId);
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
+  const [toast, setToast] = useState<{ skillName: string; templateName: string; enabled: boolean } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listTemplates().then((data) => {
+      if (cancelled) return;
+      setTemplates(data.Items);
+    }).catch(() => { /* 模板拉不到不阻塞主流程 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handlePreferenceChanged = useCallback((skill: SkillItem, template: TemplateItem, enabled: boolean) => {
+    setToast({
+      skillName: skill.SkillName,
+      templateName: template.TemplateKey || template.TemplateId,
+      enabled,
+    });
+    setTimeout(() => setToast(null), 2200);
+  }, []);
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true);
@@ -250,7 +305,9 @@ export default function SkillsView() {
               <SkillCard
                 key={skill.SkillId}
                 skill={skill}
+                templates={templates}
                 onShowDetail={() => setDetailSkill(skill)}
+                onPreferenceChanged={handlePreferenceChanged}
               />
             ))}
           </div>
@@ -259,6 +316,25 @@ export default function SkillsView() {
 
       {detailSkill && (
         <SkillDetailModal skill={detailSkill} onClose={() => setDetailSkill(null)} />
+      )}
+
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] text-white text-xs px-3.5 py-2 rounded-lg shadow-lg flex items-center gap-2 ${
+          toast.enabled ? 'bg-emerald-600' : 'bg-gray-700'
+        }`}>
+          {toast.enabled ? (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M18 12H6" />
+            </svg>
+          )}
+          {toast.enabled
+            ? `已在「${toast.templateName}」启用「${toast.skillName}」`
+            : `已解除「${toast.templateName}」的「${toast.skillName}」偏好`}
+        </div>
       )}
     </div>
   );

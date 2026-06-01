@@ -2,6 +2,8 @@ import { useLayoutEffect, useState, type RefObject } from 'react';
 
 export interface PopoverPos {
   left: number;
+  right: number;
+  top: number;
   bottom: number;
   width: number;
 }
@@ -22,6 +24,8 @@ export function usePopoverPosition(anchorRef: RefObject<HTMLElement | null>): Po
       const r = el.getBoundingClientRect();
       setPos({
         left: r.left,
+        right: window.innerWidth - r.right,
+        top: r.bottom + 8,
         bottom: window.innerHeight - r.top + 8,
         width: r.width,
       });
