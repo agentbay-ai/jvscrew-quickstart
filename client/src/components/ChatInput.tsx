@@ -1,9 +1,25 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { SkillItem } from '../types/api';
 import EnvVarsPopover from './EnvVarsPopover';
 import McpPopover from './McpPopover';
+import SlashCommandMenu from './SlashCommandMenu';
 import WechatBindPopover from './WechatBindPopover';
+
+// 检测光标前最近的 `/` 命令片段：要求 `/` 位于行首或紧跟空白后，且光标到 `/` 之间不含空白
+function detectSlashCommand(text: string, caretPos: number): { start: number; query: string } | null {
+  for (let i = caretPos - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === '/') {
+      if (i === 0 || /\s/.test(text[i - 1])) {
+        return { start: i, query: text.slice(i + 1, caretPos) };
+      }
+      return null;
+    }
+    if (/\s/.test(ch)) return null;
+  }
+  return null;
+}
 
 const MAX_TEXTAREA_HEIGHT = 240;
 const MIN_TEXTAREA_HEIGHT = 22;
@@ -39,6 +55,7 @@ export default function ChatInput({
   const [showWechat, setShowWechat] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputBoxRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
   const optionsRef = useRef<HTMLDivElement>(null);
   const skillsRef = useRef<HTMLDivElement>(null);
@@ -63,14 +80,101 @@ export default function ChatInput({
     clearAttachedFiles();
   }, [text, attachedFiles, onSend, setText, clearAttachedFiles]);
 
+  // Slash 命令菜单：检测光标附近的 /<query>
+  const [slashState, setSlashState] = useState<{ start: number; query: string; highlight: number } | null>(null);
+
+  const enabledSkills = useMemo(() => (skills?.filter((s) => s.Enabled) ?? []), [skills]);
+
+  const filteredSlashSkills = useMemo(() => {
+    if (!slashState) return [];
+    const q = slashState.query.toLowerCase();
+    if (!q) return enabledSkills;
+    return enabledSkills.filter((s) => s.SkillName.toLowerCase().includes(q));
+  }, [slashState, enabledSkills]);
+
+  const slashOpen = !!slashState && filteredSlashSkills.length > 0;
+
+  const recomputeSlash = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const caret = el.selectionStart ?? 0;
+    const detected = detectSlashCommand(text, caret);
+    if (!detected) {
+      setSlashState((prev) => (prev ? null : prev));
+      return;
+    }
+    setSlashState((prev) => {
+      if (prev && prev.start === detected.start && prev.query === detected.query) return prev;
+      return { ...detected, highlight: 0 };
+    });
+  }, [text]);
+
+  // 当 text 变化（输入或粘贴）时重检测
+  useEffect(() => { recomputeSlash(); }, [text, recomputeSlash]);
+
+  // 当用 ↑/↓ 切换 query 后导致 filtered 缩短，把 highlight 钳到合法范围
+  useEffect(() => {
+    if (!slashState) return;
+    if (filteredSlashSkills.length === 0) return;
+    if (slashState.highlight >= filteredSlashSkills.length) {
+      setSlashState({ ...slashState, highlight: 0 });
+    }
+  }, [filteredSlashSkills.length, slashState]);
+
+  const acceptSlash = useCallback((skill: SkillItem) => {
+    const s = slashState;
+    if (!s) return;
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? s.start + 1 + s.query.length;
+    const before = text.slice(0, s.start);
+    const after = text.slice(caret);
+    const insertion = `使用${skill.SkillName}技能 `;
+    setText(before + insertion + after);
+    setSlashState(null);
+    requestAnimationFrame(() => {
+      const t = textareaRef.current;
+      if (!t) return;
+      const newCaret = (before + insertion).length;
+      t.focus();
+      t.setSelectionRange(newCaret, newCaret);
+    });
+  }, [slashState, text, setText]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-    // 输入法（中文拼音、日文等）正在合成候选词时不要发送：
-    // 1) React 17+ 的 isComposing 标志
-    // 2) 浏览器在 IME 期间统一上报 keyCode 229
-    // 3) 自维护 ref（兼容部分浏览器在选词回车时 isComposing 已变 false 但事件链仍属于合成尾的情况）
     const native = e.nativeEvent as KeyboardEvent;
-    if (native.isComposing || native.keyCode === 229 || isComposingRef.current) return;
+    const composing = native.isComposing || native.keyCode === 229 || isComposingRef.current;
+
+    // Slash 菜单打开时拦截导航键
+    if (slashOpen && slashState && filteredSlashSkills.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashState({ ...slashState, highlight: (slashState.highlight + 1) % filteredSlashSkills.length });
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashState({ ...slashState, highlight: (slashState.highlight - 1 + filteredSlashSkills.length) % filteredSlashSkills.length });
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashState(null);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !composing) {
+        e.preventDefault();
+        acceptSlash(filteredSlashSkills[slashState.highlight]);
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        acceptSlash(filteredSlashSkills[slashState.highlight]);
+        return;
+      }
+    }
+
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    if (composing) return;
     e.preventDefault();
     handleSubmit();
   };
@@ -137,7 +241,7 @@ export default function ChatInput({
 
   return (
     <div className="w-full max-w-[628px] mx-auto">
-      <div className="relative rounded-2xl bg-white border border-border-strong shadow-sm">
+      <div ref={inputBoxRef} className="relative rounded-2xl bg-white border border-border-strong shadow-sm">
         {/* Drag-and-drop overlay (input-box scoped) */}
         {isDragOver && (
           <div className="absolute inset-0 z-30 rounded-2xl flex items-center justify-center pointer-events-none animate-dropzone-in overflow-hidden">
@@ -187,6 +291,9 @@ export default function ChatInput({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onKeyUp={recomputeSlash}
+            onClick={recomputeSlash}
+            onBlur={() => setTimeout(() => setSlashState(null), 120)}
             onPaste={handlePaste}
             onCompositionStart={() => { isComposingRef.current = true; }}
             onCompositionEnd={() => { isComposingRef.current = false; }}
@@ -399,6 +506,16 @@ export default function ChatInput({
           </div>
         </div>
       </div>
+
+      {slashOpen && slashState && (
+        <SlashCommandMenu
+          skills={filteredSlashSkills}
+          highlight={slashState.highlight}
+          anchorRef={inputBoxRef}
+          query={slashState.query}
+          onSelect={acceptSlash}
+        />
+      )}
     </div>
   );
 }
