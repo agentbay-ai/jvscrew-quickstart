@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listSkills, listTemplates, listUserSkills } from '../services/api';
 import { useAuthStore } from '../stores/authStore';
 import type { SkillItem, TemplateItem, UserSkill } from '../types/api';
@@ -127,71 +127,93 @@ function SkillCard({
 }) {
   const userSkill = isUserSkill(skill.SkillId);
   const isMarket = !userSkill && (skill.SkillId.startsWith('market:') || skill.SkillId.startsWith('custom:'));
+  const isBuiltin = skill.SkillId.startsWith('builtin:');
   const [showPicker, setShowPicker] = useState(false);
-  const plusBtnRef = useRef<HTMLButtonElement>(null);
+  const enableBtnRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <div
-      onClick={onShowDetail}
-      className={`relative rounded-[20px] flex flex-row items-center gap-3 px-4 min-h-[80px] overflow-visible transition cursor-pointer
-        ${userSkill
-          ? 'bg-white shadow-[inset_0_0_0_1px_#2F3A8033] hover:shadow-[inset_0_0_0_1px_#2F3A8066]'
-          : isMarket
-            ? 'bg-white/80 shadow-[inset_0_0_0_1px_#E0E1F3] rounded-[24px] hover:shadow-[inset_0_0_0_1px_#B8BAD6]'
-            : 'bg-white shadow-[inset_0_0_0_1px_#2F3A801A] hover:shadow-[inset_0_0_0_1px_#2F3A8040]'
-        }`}
-    >
-      {isEmojiIcon(skill.Icon) ? (
-        <span className="w-12 h-12 rounded-xl bg-[#F5F6FA] flex items-center justify-center text-2xl shrink-0">
-          {skill.Icon}
-        </span>
-      ) : (
-        <img src={skill.Icon} alt={skill.SkillName} className="w-12 h-12 shrink-0" />
-      )}
-
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-medium text-black truncate">{skill.SkillName}</span>
-          {skill.SkillId.startsWith('builtin:') && (
-            <span className="shrink-0 rounded-lg bg-white shadow-[inset_0_0_0_1px_#2F3A801A] px-2 text-xs leading-[22px] text-black/60">
-              内置
-            </span>
-          )}
-          {isMarket && (
-            <span className="shrink-0 rounded-lg bg-white shadow-[inset_0_0_0_1px_#00000014] px-2 text-xs leading-[22px] text-black/60">
-              成长型
-            </span>
-          )}
-          {userSkill && (
-            <span className="shrink-0 rounded-lg bg-[#EEF1FF] shadow-[inset_0_0_0_1px_#2F3A8033] px-2 text-xs leading-[22px] text-[#2F3A80]">
-              个人
-            </span>
-          )}
+    <div className="rounded-[20px] bg-white shadow-[inset_0_0_0_1px_#2F3A801A] flex flex-col gap-4 p-4 overflow-hidden min-h-[172px] transition hover:shadow-[inset_0_0_0_1px_#2F3A8040]">
+      {/* Top: avatar + meta */}
+      <div className="w-full flex items-start gap-3">
+        {isEmojiIcon(skill.Icon) ? (
+          <span className="w-[52px] h-[52px] rounded-xl bg-[#F5F6FA] flex items-center justify-center text-2xl shrink-0">
+            {skill.Icon}
+          </span>
+        ) : (
+          <img src={skill.Icon} alt={skill.SkillName} className="w-[52px] h-[52px] rounded-xl shrink-0 object-contain bg-[#F5F6FA] p-1" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-base font-medium text-black truncate">{skill.SkillName}</span>
+            {isBuiltin && (
+              <span className="shrink-0 rounded-lg bg-black/[0.06] px-1.5 leading-5 text-xs text-black/70">
+                内置
+              </span>
+            )}
+            {isMarket && (
+              <span className="shrink-0 rounded-lg bg-black/[0.06] px-1.5 leading-5 text-xs text-black/70">
+                成长型
+              </span>
+            )}
+            {userSkill && (
+              <span className="shrink-0 rounded-lg bg-[#EEF1FF] px-1.5 leading-5 text-xs text-[#2F3A80]">
+                个人
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-black/55 mt-1.5 leading-relaxed line-clamp-2">
+            {skill.Description || (userSkill ? '用户自建技能' : '暂无描述')}
+          </p>
         </div>
-        <span className="text-xs text-black/60 truncate">{skill.Description || (userSkill ? '用户自建技能' : '')}</span>
       </div>
 
-      {!userSkill && (
-        <button
-          ref={plusBtnRef}
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setShowPicker((v) => !v); }}
-          className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition ${
-            showPicker
-              ? 'bg-primary/10 text-primary'
-              : 'bg-[#F5F6FA] text-black/55 hover:bg-primary/10 hover:text-primary'
-          }`}
-          title="在其他模板上启用此技能"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
-      )}
+      {/* Bottom: actions */}
+      <div className="w-full flex items-center gap-2 mt-auto">
+        {!userSkill ? (
+          <>
+            <button
+              ref={enableBtnRef}
+              type="button"
+              onClick={() => setShowPicker((v) => !v)}
+              className={`flex-1 h-10 rounded-[20px] flex items-center justify-center gap-2 transition ${
+                showPicker
+                  ? 'bg-primary/10 text-primary shadow-[inset_0_0_0_1px_rgba(53,80,255,0.25)]'
+                  : 'bg-[#EDEEF6] hover:bg-[#e2e3f0] text-black'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span className="text-xs font-medium">在模板上启用</span>
+            </button>
+            <button
+              type="button"
+              onClick={onShowDetail}
+              className="w-10 h-10 rounded-full bg-[#EDEEF6] flex items-center justify-center text-2xl leading-none text-black hover:bg-[#e2e3f0] transition"
+              aria-label="查看技能详情"
+              title="查看技能详情"
+            >
+              ⋮
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={onShowDetail}
+            className="flex-1 h-10 rounded-[20px] bg-[#EDEEF6] flex items-center justify-center gap-2 hover:bg-[#e2e3f0] transition text-black"
+          >
+            <svg className="w-4 h-4 text-black/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+            </svg>
+            <span className="text-xs font-medium">查看详情</span>
+          </button>
+        )}
+      </div>
 
       {showPicker && !userSkill && (
         <SkillTemplatePicker
-          anchorRef={plusBtnRef}
+          anchorRef={enableBtnRef}
           templates={templates}
           skillId={skill.SkillId}
           onClose={() => setShowPicker(false)}
@@ -269,13 +291,45 @@ export default function SkillsView() {
     });
   }, [loadSkills]);
 
+  const userSkillCount = useMemo(() => skills.filter((s) => isUserSkill(s.SkillId)).length, [skills]);
+  const builtinCount = useMemo(() => skills.filter((s) => s.SkillId.startsWith('builtin:')).length, [skills]);
+  const marketCount = useMemo(
+    () => skills.filter((s) => !isUserSkill(s.SkillId) && (s.SkillId.startsWith('market:') || s.SkillId.startsWith('custom:'))).length,
+    [skills],
+  );
+
   return (
     <div className="h-full w-full overflow-auto bg-[#FAFBFF]">
-      <div className="flex flex-col gap-4 p-4 max-w-[1440px]">
+      <div className="flex flex-col gap-5 p-6 max-w-[1440px]">
+        {/* Page header */}
+        <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline gap-3">
+            <h2 className="text-lg font-medium text-black">技能</h2>
+            {!isLoading && skills.length > 0 && (
+              <span className="text-xs text-black/40">
+                共 {skills.length} 项
+                {userSkillCount > 0 && <span className="ml-2">· 个人 {userSkillCount}</span>}
+                {builtinCount > 0 && <span className="ml-2">· 内置 {builtinCount}</span>}
+                {marketCount > 0 && <span className="ml-2">· 成长型 {marketCount}</span>}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => void loadSkills()}
+            disabled={isLoading}
+            className="text-[11px] text-[#2F3A80] hover:underline disabled:opacity-50"
+          >
+            {isLoading ? '加载中...' : '刷新'}
+          </button>
+        </div>
+
         {/* Tip banner */}
-        <div className="px-2 py-2 text-sm leading-[22px]">
-          <span>💡 </span>
-          <span className="text-black">这里展示当前可见的技能全集；如需为某位专家单独开关技能，请到「专家」页面操作。</span>
+        <div className="rounded-xl bg-[#EEF1FF]/60 shadow-[inset_0_0_0_1px_#2F3A8014] px-4 py-2.5 text-xs text-black/70 leading-relaxed flex items-start gap-2">
+          <svg className="w-4 h-4 text-[#2F3A80] shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+              d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+          </svg>
+          <span>这里展示当前可见的技能全集。点击「在模板上启用」可在多个模板间快速切换偏好；如需为单个专家开关技能，请到「专家」页面操作。</span>
         </div>
 
         {error && (
@@ -288,14 +342,19 @@ export default function SkillsView() {
         )}
 
         {isLoading && (
-          <div className="rounded-[20px] bg-white shadow-[inset_0_0_0_1px_#2F3A801A] px-5 py-12 text-center text-sm text-black/40">
-            加载技能列表中...
+          <div className="rounded-[20px] bg-white shadow-[inset_0_0_0_1px_#2F3A801A] py-16 flex flex-col items-center gap-2">
+            <svg className="w-6 h-6 animate-spin text-[#2F3A80]" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-sm text-black/45">加载技能列表中...</span>
           </div>
         )}
 
         {!isLoading && skills.length === 0 && !error && (
-          <div className="rounded-[20px] bg-white shadow-[inset_0_0_0_1px_#2F3A801A] px-5 py-16 text-center">
-            <div className="text-sm text-black/40">暂无技能</div>
+          <div className="rounded-[20px] bg-white shadow-[inset_0_0_0_1px_#2F3A801A] py-20 flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#F5F6FA] flex items-center justify-center text-2xl">⚡</div>
+            <div className="text-sm text-black/45">暂无技能</div>
           </div>
         )}
 
