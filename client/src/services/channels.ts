@@ -1,7 +1,9 @@
 import type {
+  ChannelInstanceStatus,
   ChannelType,
   CreateChannelQrCodeResponse,
   DescribeChannelQrCodeResponse,
+  ListChannelInstancesResponse,
 } from '../types/channels';
 
 export async function createWechatQrCode(params: {
@@ -34,4 +36,30 @@ export async function describeWechatQrCode(
     throw new Error(data.Message || data.Code || `API error: ${res.status}`);
   }
   return data;
+}
+
+export async function listChannelInstances(params: {
+  channelType?: ChannelType;
+  templateId?: string;
+  externalUserId?: string;
+  status?: ChannelInstanceStatus;
+  pageSize?: number;
+  pageNumber?: number;
+}): Promise<ListChannelInstancesResponse> {
+  const res = await fetch('/api/channels/list', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok || data.Success === false) {
+    throw new Error(data.Message || data.Code || `API error: ${res.status}`);
+  }
+  return {
+    ...data,
+    Channels: Array.isArray(data.Channels) ? data.Channels : [],
+    TotalCount: data.TotalCount ?? 0,
+    PageSize: data.PageSize ?? 20,
+    PageNumber: data.PageNumber ?? 1,
+  };
 }

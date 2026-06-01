@@ -48,4 +48,25 @@ router.post('/qrcode/describe', async (req, res) => {
   }
 });
 
+router.post('/list', async (req, res) => {
+  try {
+    const { channelType, templateId, externalUserId, status, pageSize, pageNumber } = req.body;
+    const extra: Record<string, string> = {};
+    if (channelType) extra.ChannelType = channelType;
+    if (templateId) extra.TemplateId = templateId;
+    if (externalUserId) extra.ExternalUserId = externalUserId;
+    if (status) extra.Status = status;
+    if (pageSize) extra.PageSize = String(pageSize);
+    if (pageNumber) extra.PageNumber = String(pageNumber);
+
+    const data = await popRequest('ListChannelInstances', extra);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      Success: false,
+      Message: err instanceof Error ? err.message : 'Internal error',
+    });
+  }
+});
+
 export default router;

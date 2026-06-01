@@ -220,7 +220,7 @@ export default function ChatInput({
       if (showMcp && mcpRef.current && !mcpRef.current.contains(target) && inPortal?.getAttribute('data-popover-portal') !== 'mcp') {
         setShowMcp(false);
       }
-      if (showWechat && wechatRef.current && !wechatRef.current.contains(target)) {
+      if (showWechat && wechatRef.current && !wechatRef.current.contains(target) && inPortal?.getAttribute('data-popover-portal') !== 'wechat') {
         setShowWechat(false);
       }
     };
@@ -420,7 +420,7 @@ export default function ChatInput({
                 </svg>
               </button>
               {showWechat && (
-                <WechatBindPopover onClose={() => setShowWechat(false)} />
+                <WechatBindPopover onClose={() => setShowWechat(false)} anchorRef={wechatRef} />
               )}
             </div>
 

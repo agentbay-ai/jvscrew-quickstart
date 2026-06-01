@@ -21,3 +21,27 @@ export interface DescribeChannelQrCodeResponse {
   ErrMsg?: string | null;
   ExpiresAt: number;
 }
+
+export type ChannelInstanceStatus = 'enabled' | 'disabled' | 'expired';
+
+export interface ChannelInstanceItem {
+  ChannelInstanceId: string;
+  TenantId?: number;
+  TemplateId: string;
+  ExternalUserId: string;
+  ChannelType: ChannelType;
+  Name?: string;
+  Status: ChannelInstanceStatus;
+  GmtCreate?: string;
+  GmtModified?: string;
+}
+
+export interface ListChannelInstancesResponse {
+  Success: boolean;
+  Code?: string;
+  Message?: string;
+  Channels: ChannelInstanceItem[];
+  TotalCount: number;
+  PageSize: number;
+  PageNumber: number;
+}
