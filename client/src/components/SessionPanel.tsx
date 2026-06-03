@@ -22,7 +22,21 @@ export default function SessionPanel({ onNewChat, onOpenTasks, onOpenFiles }: Se
   const sortedSessions = useMemo(() => {
     const ts = (s: typeof sessions[number]) =>
       new Date(s.UpdatedAt || s.CreatedAt || 0).getTime();
-    return [...sessions].sort((a, b) => ts(b) - ts(a));
+
+    // 按 SessionId 去重，保留 UpdatedAt 最新的一条。
+    // 后端有时会对同一个渠道实例（如微信 gateway:ci-...:gateway:... SessionId）
+    // 返回多条记录，本地去重避免 React key 重复 + 点击事件错绑到错误的行。
+    // 不按 channel 做类型过滤——console / wechat / dingtalk / schedule 等会话都保留展示，
+    // 仅折叠 SessionId 完全相同的重复。
+    const dedup = new Map<string, typeof sessions[number]>();
+    for (const s of sessions) {
+      if (!s.SessionId) continue;
+      const existing = dedup.get(s.SessionId);
+      if (!existing || ts(s) > ts(existing)) {
+        dedup.set(s.SessionId, s);
+      }
+    }
+    return Array.from(dedup.values()).sort((a, b) => ts(b) - ts(a));
   }, [sessions]);
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const { refreshSessions, loadHistory, removeChat } = useSession();
