@@ -345,6 +345,7 @@ export interface ToolCallInfo {
   status: 'calling' | 'completed';
   input?: string;
   output?: string;
+  callId?: string;  // 后端 plugin_call / plugin_call_output 用 call_id 关联，用于精准匹配
 }
 
 export interface MessageLatency {

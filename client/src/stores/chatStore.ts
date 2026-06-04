@@ -30,6 +30,7 @@ interface ChatState {
   updateLastAssistantOf: (sessionId: string, partial: Partial<DisplayMessage>) => void;
   addToolCallTo: (sessionId: string, toolCall: ToolCallInfo) => void;
   updateLastToolCallOf: (sessionId: string, partial: Partial<ToolCallInfo>) => void;
+  updateToolCallByCallId: (sessionId: string, callId: string, partial: Partial<ToolCallInfo>) => void;
   finalizeAllToolCallsOf: (sessionId: string) => void;
   setStreamingFor: (sessionId: string, streaming: boolean) => void;
   setAbortControllerFor: (sessionId: string, ctrl: AbortController | null) => void;
@@ -142,6 +143,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
         if (targetIdx === -1) targetIdx = calls.length - 1;
+        calls[targetIdx] = { ...calls[targetIdx], ...partial };
+        return { ...m, toolCalls: calls };
+      });
+      return { sessionMessages: { ...s.sessionMessages, [sessionId]: next } };
+    }),
+
+  updateToolCallByCallId: (sessionId, callId, partial) =>
+    set((s) => {
+      const list = s.sessionMessages[sessionId];
+      if (!list) return {};
+      const next = updateLastAssistantInList(list, (m) => {
+        if (!m.toolCalls?.length) return m;
+        const calls = [...m.toolCalls];
+        let targetIdx = calls.findIndex((tc) => tc.callId === callId);
+        if (targetIdx === -1) {
+          // 没匹配上，回落到老逻辑（最后一个 calling，否则最后一条）
+          for (let j = calls.length - 1; j >= 0; j--) {
+            if (calls[j].status === 'calling') { targetIdx = j; break; }
+          }
+          if (targetIdx === -1) targetIdx = calls.length - 1;
+        }
         calls[targetIdx] = { ...calls[targetIdx], ...partial };
         return { ...m, toolCalls: calls };
       });

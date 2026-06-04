@@ -247,12 +247,16 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 function ToolCallCard({ toolCall }: { toolCall: ToolCallInfo }) {
   const [expanded, setExpanded] = useState(false);
   const isCalling = toolCall.status === 'calling';
+  // name 兜底：在拿到真实工具名前后端会用 plugin_call/tool_call 这种通用占位
+  const placeholderName = toolCall.name === 'plugin_call' || toolCall.name === 'tool_call';
+  const displayName = placeholderName ? '工具' : toolCall.name;
+  const hasDetail = !!(toolCall.input || toolCall.output);
 
   return (
     <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2 text-xs">
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full text-left"
+        onClick={() => hasDetail && setExpanded(!expanded)}
+        className={`flex items-center gap-2 w-full text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {isCalling ? (
           <svg className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
@@ -265,9 +269,9 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCallInfo }) {
           </svg>
         )}
         <span className="font-medium text-blue-700 truncate">
-          {isCalling ? '调用中: ' : '已调用: '}{toolCall.name}
+          调用 <span className="font-mono">{displayName}</span>{isCalling ? ' 中...' : ''}
         </span>
-        {(toolCall.input || toolCall.output) && (
+        {hasDetail && (
           <svg
             className={`w-3 h-3 text-blue-400 ml-auto shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -276,20 +280,23 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCallInfo }) {
           </svg>
         )}
       </button>
-      {expanded && (toolCall.input || toolCall.output) && (
-        <div className="mt-2 space-y-1.5">
+      {expanded && hasDetail && (
+        <div className="mt-2 bg-white rounded-md border border-blue-100 overflow-hidden">
           {toolCall.input && (
-            <div>
-              <span className="text-blue-500 font-medium">输入:</span>
-              <pre className="mt-0.5 whitespace-pre-wrap text-black/60 bg-white rounded px-2 py-1 border border-blue-100 max-h-32 overflow-auto">
+            <div className="px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-blue-500 font-medium mb-1">输入</div>
+              <pre className="whitespace-pre-wrap text-[11px] text-black/70 max-h-40 overflow-auto m-0 font-mono">
                 {formatToolData(toolCall.input)}
               </pre>
             </div>
           )}
+          {toolCall.input && toolCall.output && (
+            <div className="border-t border-dashed border-blue-100" />
+          )}
           {toolCall.output && (
-            <div>
-              <span className="text-green-600 font-medium">输出:</span>
-              <pre className="mt-0.5 whitespace-pre-wrap text-black/60 bg-white rounded px-2 py-1 border border-blue-100 max-h-32 overflow-auto">
+            <div className="px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-green-600 font-medium mb-1">输出</div>
+              <pre className="whitespace-pre-wrap text-[11px] text-black/70 max-h-40 overflow-auto m-0 font-mono">
                 {formatToolData(toolCall.output)}
               </pre>
             </div>

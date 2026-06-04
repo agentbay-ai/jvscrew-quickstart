@@ -161,6 +161,7 @@ export function useChat() {
       let currentPhase: 'reasoning' | 'message' | null = null;
       let activeSessionId = streamSessionId;
       let streamingFlagged = true;
+      let sendLockReleased = false;
 
       const markLatency = (key: 'firstAnyAt' | 'firstAnswerAt') => {
         if (latency[key] != null) return;
@@ -171,6 +172,17 @@ export function useChat() {
       // 每个真实 byte 到达时刷新；finishStreaming 时把它作为 TTLB，避免被后端 completed 事件的延迟污染
       const touchLastByte = () => { lastByteAt = Date.now(); };
 
+      // 只解锁 Send 按钮，不标记消息完成。
+      // 用于 message:completed —— 这时模型刚写完一段，但后面可能还有 tool_call / 下一段 message。
+      const releaseSendLock = () => {
+        if (sendLockReleased) return;
+        sendLockReleased = true;
+        const s = useChatStore.getState();
+        s.setStreamingFor(activeSessionId, false);
+      };
+
+      // 真正结束：定格耗时、收口工具调用、设置 message.isStreaming = false、清理 controller。
+      // 用于 response:completed / response:failed / onError / onDone / abort。
       const finishStreaming = () => {
         if (!streamingFlagged) return;
         streamingFlagged = false;
@@ -178,7 +190,10 @@ export function useChat() {
         const s = useChatStore.getState();
         s.finalizeAllToolCallsOf(activeSessionId);
         s.updateLastAssistantOf(activeSessionId, { isStreaming: false, latency: { ...latency } });
-        s.setStreamingFor(activeSessionId, false);
+        if (!sendLockReleased) {
+          sendLockReleased = true;
+          s.setStreamingFor(activeSessionId, false);
+        }
         s.setAbortControllerFor(activeSessionId, null);
       };
 
@@ -223,24 +238,53 @@ export function useChat() {
           }
 
           if (obj === 'message' && (type === 'plugin_call' || type === 'tool_call')) {
+            // in_progress 时后端通常还没给出 name/arguments（Content 为空），先用占位创建
+            // completed 时 Content[0].Data 才包含 { name, arguments, call_id }，
+            // 回填到同一个 toolCall 并记录 callId 以便后续 plugin_call_output 精准匹配
+            const data = event.Content?.[0] as unknown as {
+              Data?: { name?: string; input?: string; arguments?: string; call_id?: string };
+            } | undefined;
+            const realName = data?.Data?.name;
+            const realInput = data?.Data?.arguments ?? data?.Data?.input;
+            const callId = data?.Data?.call_id;
             if (status === 'in_progress') {
               markLatency('firstAnyAt');
               touchLastByte();
-              const data = event.Content?.[0] as unknown as { Data?: { name?: string; input?: string } } | undefined;
-              const name = data?.Data?.name || type;
-              const input = data?.Data?.input;
-              s.addToolCallTo(activeSessionId, { name, status: 'calling', input });
+              s.addToolCallTo(activeSessionId, {
+                name: realName || type,
+                status: 'calling',
+                input: realInput,
+                callId,
+              });
             } else if (status === 'completed') {
               touchLastByte();
-              s.updateLastToolCallOf(activeSessionId, { status: 'completed' });
+              const partial = {
+                status: 'completed' as const,
+                ...(realName ? { name: realName } : {}),
+                ...(realInput !== undefined ? { input: realInput } : {}),
+                ...(callId ? { callId } : {}),
+              };
+              if (callId) {
+                s.updateToolCallByCallId(activeSessionId, callId, partial);
+              } else {
+                s.updateLastToolCallOf(activeSessionId, partial);
+              }
             }
           }
 
           if (obj === 'message' && type === 'plugin_call_output' && status === 'completed') {
             touchLastByte();
-            const data = event.Content?.[0] as unknown as { Data?: { output?: string } } | undefined;
-            if (data?.Data?.output) {
-              s.updateLastToolCallOf(activeSessionId, { status: 'completed', output: data.Data.output });
+            const data = event.Content?.[0] as unknown as {
+              Data?: { output?: string; call_id?: string; name?: string };
+            } | undefined;
+            const out = data?.Data?.output;
+            const callId = data?.Data?.call_id;
+            if (out) {
+              if (callId) {
+                s.updateToolCallByCallId(activeSessionId, callId, { status: 'completed', output: out });
+              } else {
+                s.updateLastToolCallOf(activeSessionId, { status: 'completed', output: out });
+              }
             }
           }
 
@@ -249,13 +293,14 @@ export function useChat() {
             activeSessionId = event.SessionId;
           }
 
-          // 提前解锁：message 阶段完成 = 模型已经写完最后一个字。
-          // 不等 response.completed（后端可能再延迟 ~2s 才发），用户能立即发下一条。
+          // 提前解锁 Send 按钮：message 阶段完成 = 模型这一段已经写完。
+          // 不等 response.completed（后端可能再延迟 ~2s 才发）—— 但只是允许用户继续发下一条，
+          // 此时如果后面还有 tool_call / 下一段 message，消息气泡仍保持 streaming（不显示复制/耗时）。
           if (obj === 'message' && type === 'message' && status === 'completed') {
-            finishStreaming();
+            releaseSendLock();
           }
 
-          // 兜底：万一上面没触发（如纯 reasoning 不出 message 的极端情况）
+          // 真正结束：才显示复制按钮和耗时统计、收口工具调用。
           if (obj === 'response' && status === 'completed') {
             finishStreaming();
           }
