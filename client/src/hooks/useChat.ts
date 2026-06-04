@@ -4,7 +4,32 @@ import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSandboxStore } from '../stores/sandboxStore';
 import { startChatSSE } from '../services/sse';
-import type { SSEEvent, DisplayMessage, UploadedFileInput } from '../types/api';
+import { stopSession } from '../services/api';
+import type { SSEEvent, DisplayMessage, ToolCallInfo, UploadedFileInput } from '../types/api';
+
+// Object=message + plugin_call/plugin_call_output 时 Content[0].Data 的形状
+type ToolPayload = {
+  name?: string;
+  input?: string;
+  arguments?: string;
+  output?: string;
+  call_id?: string;
+};
+
+function extractToolData(event: SSEEvent): ToolPayload | null {
+  const item = event.Content?.[0] as unknown as { Data?: ToolPayload } | undefined;
+  return item?.Data ?? null;
+}
+
+function readErrorText(event: SSEEvent): string {
+  const e = event as unknown as Record<string, unknown>;
+  return (
+    (e.Error as string) ||
+    (e.Message as string) ||
+    (e.message as string) ||
+    JSON.stringify(event)
+  );
+}
 
 const EMPTY_MESSAGES: DisplayMessage[] = [];
 
@@ -161,7 +186,6 @@ export function useChat() {
       let currentPhase: 'reasoning' | 'message' | null = null;
       let activeSessionId = streamSessionId;
       let streamingFlagged = true;
-      let sendLockReleased = false;
 
       const markLatency = (key: 'firstAnyAt' | 'firstAnswerAt') => {
         if (latency[key] != null) return;
@@ -172,17 +196,19 @@ export function useChat() {
       // 每个真实 byte 到达时刷新；finishStreaming 时把它作为 TTLB，避免被后端 completed 事件的延迟污染
       const touchLastByte = () => { lastByteAt = Date.now(); };
 
-      // 只解锁 Send 按钮，不标记消息完成。
-      // 用于 message:completed —— 这时模型刚写完一段，但后面可能还有 tool_call / 下一段 message。
-      const releaseSendLock = () => {
-        if (sendLockReleased) return;
-        sendLockReleased = true;
-        const s = useChatStore.getState();
-        s.setStreamingFor(activeSessionId, false);
+      // 把当前 content 沉淀到 reasoning，并重置 firstAnswerAt
+      // —— 沉淀意味着"这段不是最终答案"，TTFAT 应改由下一段 message 重新计时
+      const flushContentSegment = () => {
+        useChatStore.getState().flushContentToReasoningOf(activeSessionId);
+        if (latency.firstAnswerAt != null) {
+          latency.firstAnswerAt = undefined;
+          useChatStore.getState().updateLastAssistantOf(activeSessionId, { latency: { ...latency } });
+        }
       };
 
-      // 真正结束：定格耗时、收口工具调用、设置 message.isStreaming = false、清理 controller。
-      // 用于 response:completed / response:failed / onError / onDone / abort。
+      // 任务真正结束：定格耗时、收口工具调用、设置 message.isStreaming = false、释放 Send 锁、清理 controller。
+      // 一次响应可能包含多段 message + 多次 tool_call，必须等到 response:completed 才解锁
+      // —— 否则 Stop 按钮会在中间错误地变回 Send（不符合"任务进行中按钮始终为 Stop"的要求）。
       const finishStreaming = () => {
         if (!streamingFlagged) return;
         streamingFlagged = false;
@@ -190,10 +216,7 @@ export function useChat() {
         const s = useChatStore.getState();
         s.finalizeAllToolCallsOf(activeSessionId);
         s.updateLastAssistantOf(activeSessionId, { isStreaming: false, latency: { ...latency } });
-        if (!sendLockReleased) {
-          sendLockReleased = true;
-          s.setStreamingFor(activeSessionId, false);
-        }
+        s.setStreamingFor(activeSessionId, false);
         s.setAbortControllerFor(activeSessionId, null);
       };
 
@@ -211,45 +234,114 @@ export function useChat() {
         contextMessages,
         signal: controller.signal,
 
+        // ============================================================
+        //  Chat SSE 事件处理
+        //  按官方文档把事件分四类：
+        //   ① 思考  reasoning：message/reasoning/*  +  归属为 reasoning 的 content/text/*
+        //   ② 工具  plugin_call (assistant) + plugin_call_output (tool)
+        //   ③ 正文  message/message/*  +  归属为 message 的 content/text/*
+        //   ④ 生命周期  response/*  +  error
+        //
+        //  关键规则：
+        //  - content/text/in_progress 是增量；content/text/completed 是聚合校验，丢弃
+        //  - content/data/completed 是占位，真实 Data 在下一条 message/plugin_call*:completed
+        //  - 工具配对靠 Data.call_id；并发时不能只看"最后一个 calling"
+        //  - 一次响应可能有多段 message + 多次工具，只有 response/completed 才是真结束
+        // ============================================================
         onEvent: (event: SSEEvent) => {
           const obj = event.Object;
           const type = event.Type;
           const status = event.Status;
           const s = useChatStore.getState();
 
+          // 旁路：sandbox_send_file_to_user 的 base64 文件下发独立处理
           handleFileOutput(event);
 
-          if (obj === 'message' && (type === 'reasoning' || type === 'message')) {
-            currentPhase = type;
+          // ---------- ④ 生命周期 ----------
+          if (obj === 'response') {
+            if (status === 'completed') {
+              finishStreaming();
+            } else if (status === 'failed') {
+              const errText = readErrorText(event);
+              s.updateLastAssistantOf(activeSessionId, {
+                content: `Error: ${errText}`, isStreaming: false,
+              });
+              finishStreaming();
+            }
+            // created / in_progress 不需要处理
+            return;
           }
 
-          if (obj === 'content' && type === 'text' && status === 'in_progress') {
+          if (obj === 'error') {
+            const errText = readErrorText(event);
+            s.updateLastAssistantOf(activeSessionId, {
+              content: `Error: ${errText}`, isStreaming: false,
+            });
+            finishStreaming();
+            return;
+          }
+
+          // ---------- content：思考/正文文本增量 ----------
+          if (obj === 'content') {
+            // content/text/in_progress 才是真增量；text/completed 是聚合校验，data 是占位，均丢弃
+            if (type !== 'text' || status !== 'in_progress') return;
             const txt = event.Text || '';
-            if (txt) {
-              markLatency('firstAnyAt');
-              touchLastByte();
-            }
+            if (!txt) return;
+            markLatency('firstAnyAt');
+            touchLastByte();
+            // 归属由"最近一条 message 事件的 Type"决定（currentPhase）
             if (currentPhase === 'reasoning') {
               s.appendToLastAssistantOf(activeSessionId, 'reasoning', txt);
             } else if (currentPhase === 'message') {
-              if (txt) markLatency('firstAnswerAt');
+              markLatency('firstAnswerAt');
               s.appendToLastAssistantOf(activeSessionId, 'content', txt);
             }
+            return;
           }
 
-          if (obj === 'message' && (type === 'plugin_call' || type === 'tool_call')) {
-            // in_progress 时后端通常还没给出 name/arguments（Content 为空），先用占位创建
-            // completed 时 Content[0].Data 才包含 { name, arguments, call_id }，
-            // 回填到同一个 toolCall 并记录 callId 以便后续 plugin_call_output 精准匹配
-            const data = event.Content?.[0] as unknown as {
-              Data?: { name?: string; input?: string; arguments?: string; call_id?: string };
-            } | undefined;
-            const realName = data?.Data?.name;
-            const realInput = data?.Data?.arguments ?? data?.Data?.input;
-            const callId = data?.Data?.call_id;
+          // ---------- message 系列 ----------
+          if (obj !== 'message') return;
+
+          // 后端可能在流中纠正 SessionId（如新建会话），任何 message 事件都同步一次
+          if (event.SessionId && event.SessionId !== activeSessionId) {
+            s.renameSession(activeSessionId, event.SessionId);
+            activeSessionId = event.SessionId;
+          }
+
+          // ① 思考
+          if (type === 'reasoning') {
             if (status === 'in_progress') {
+              currentPhase = 'reasoning';
+            }
+            // reasoning:completed —— 阶段标记，无需特殊处理
+            return;
+          }
+
+          // ③ 正文
+          if (type === 'message') {
+            if (status === 'in_progress') {
+              // 新 message 段开始：把上一段 content 沉淀到 reasoning
+              // —— 只把"最后一段 message"留作正文，中间叙述折进思考面板
+              flushContentSegment();
+              currentPhase = 'message';
+            }
+            // message:completed —— 此段写完，但响应未结束（后面可能还有 tool/message），不要解锁
+            return;
+          }
+
+          // ② 工具调用（assistant 发起）
+          if (type === 'plugin_call' || type === 'tool_call') {
+            const data = extractToolData(event);
+            const realName = data?.name;
+            const realInput = data?.arguments ?? data?.input;
+            const callId = data?.call_id;
+
+            if (status === 'in_progress') {
+              // 工具开始 = 当前 content 必非最终答案，沉淀
+              flushContentSegment();
               markLatency('firstAnyAt');
               touchLastByte();
+              // in_progress 时 Content 缺失，先用占位创建，后续 completed 通过 callId 回填
               s.addToolCallTo(activeSessionId, {
                 name: realName || type,
                 status: 'calling',
@@ -258,69 +350,40 @@ export function useChat() {
               });
             } else if (status === 'completed') {
               touchLastByte();
-              const partial = {
-                status: 'completed' as const,
+              const partial: Partial<ToolCallInfo> = {
+                status: 'completed',
                 ...(realName ? { name: realName } : {}),
                 ...(realInput !== undefined ? { input: realInput } : {}),
                 ...(callId ? { callId } : {}),
               };
+              // 优先按 callId 精确匹配；缺失时回落到"最后一个 calling"
               if (callId) {
                 s.updateToolCallByCallId(activeSessionId, callId, partial);
               } else {
                 s.updateLastToolCallOf(activeSessionId, partial);
               }
             }
+            return;
           }
 
-          if (obj === 'message' && type === 'plugin_call_output' && status === 'completed') {
+          // ② 工具返回（tool 角色）
+          if (type === 'plugin_call_output') {
+            // in_progress 此时无数据，跳过；只在 completed 时拿到 output
+            if (status !== 'completed') return;
+            const data = extractToolData(event);
+            const out = data?.output;
+            if (!out) return;
             touchLastByte();
-            const data = event.Content?.[0] as unknown as {
-              Data?: { output?: string; call_id?: string; name?: string };
-            } | undefined;
-            const out = data?.Data?.output;
-            const callId = data?.Data?.call_id;
-            if (out) {
-              if (callId) {
-                s.updateToolCallByCallId(activeSessionId, callId, { status: 'completed', output: out });
-              } else {
-                s.updateLastToolCallOf(activeSessionId, { status: 'completed', output: out });
-              }
+            if (data?.call_id) {
+              s.updateToolCallByCallId(activeSessionId, data.call_id, {
+                status: 'completed', output: out,
+              });
+            } else {
+              s.updateLastToolCallOf(activeSessionId, {
+                status: 'completed', output: out,
+              });
             }
-          }
-
-          if (obj === 'message' && status === 'completed' && event.SessionId && event.SessionId !== activeSessionId) {
-            s.renameSession(activeSessionId, event.SessionId);
-            activeSessionId = event.SessionId;
-          }
-
-          // 提前解锁 Send 按钮：message 阶段完成 = 模型这一段已经写完。
-          // 不等 response.completed（后端可能再延迟 ~2s 才发）—— 但只是允许用户继续发下一条，
-          // 此时如果后面还有 tool_call / 下一段 message，消息气泡仍保持 streaming（不显示复制/耗时）。
-          if (obj === 'message' && type === 'message' && status === 'completed') {
-            releaseSendLock();
-          }
-
-          // 真正结束：才显示复制按钮和耗时统计、收口工具调用。
-          if (obj === 'response' && status === 'completed') {
-            finishStreaming();
-          }
-
-          if (obj === 'response' && status === 'failed') {
-            const errText =
-              (event as unknown as Record<string, unknown>).Error as string ||
-              (event as unknown as Record<string, unknown>).Message as string ||
-              JSON.stringify(event);
-            s.updateLastAssistantOf(activeSessionId, { content: `Error: ${errText}`, isStreaming: false });
-            finishStreaming();
-          }
-
-          if (obj === 'error') {
-            const errText =
-              (event as unknown as Record<string, unknown>).message as string ||
-              (event as unknown as Record<string, unknown>).Message as string ||
-              JSON.stringify(event);
-            s.updateLastAssistantOf(activeSessionId, { content: `Error: ${errText}`, isStreaming: false });
-            finishStreaming();
+            return;
           }
         },
 
@@ -355,17 +418,29 @@ export function useChat() {
     [config, refreshAccessToken, setSessionId, upsertSession],
   );
 
-  const stopChat = useCallback(() => {
+  const stopChat = useCallback(async () => {
     const s = useChatStore.getState();
     const id = s.currentSessionId;
     if (!id) return;
+
+    // 1. 先中止本地 SSE 流，立即释放 UI（不等服务端返回）
     const ctrl = s.abortControllers[id];
     ctrl?.abort();
     s.finalizeAllToolCallsOf(id);
     s.updateLastAssistantOf(id, { isStreaming: false });
     s.setStreamingFor(id, false);
     s.setAbortControllerFor(id, null);
-  }, []);
+
+    // 2. 通知服务端真正中止 Agent 任务，避免后端继续推理消耗 token
+    //    服务端无运行中任务会返回 Stopped:false，属正常情况；失败不向用户报错
+    if (!config) return;
+    try {
+      const token = await refreshAccessToken();
+      if (token) await stopSession(token, id, config.templateId);
+    } catch (err) {
+      console.warn('[chat] stopSession failed:', err);
+    }
+  }, [config, refreshAccessToken]);
 
   const newChat = useCallback(() => {
     setSessionId(null);

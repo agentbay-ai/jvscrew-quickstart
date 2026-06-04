@@ -50,8 +50,8 @@ function mergeFiles(
 }
 
 export default function MessageBubble({ message }: MessageBubbleProps) {
-  const isReasoningPhase = message.isStreaming && message.reasoning && !message.content;
-  const [showReasoning, setShowReasoning] = useState(isReasoningPhase ?? false);
+  // 思考区域：始终默认折叠，由用户主动展开查看
+  const [showReasoning, setShowReasoning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showLatency, setShowLatency] = useState(false);
   const latencyBtnRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +73,11 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   const content = parsed.content;
   const files = mergeFiles(message.files, parsed.files);
 
+  // 是否处于"正在思考"阶段：还在 streaming 且尚未开始输出最终正文。
+  // 工具调用、reasoning 事件、中间 message 段都算"思考中"——它们的文本会被
+  // useChat 沉淀进 message.reasoning，content 维持为空直到最后一段 message。
+  const isThinking = !!message.isStreaming && !content;
+
   if (isSystem) {
     return (
       <div className="flex justify-center py-2">
@@ -85,14 +90,6 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
     );
   }
-
-  useEffect(() => {
-    if (isReasoningPhase) {
-      setShowReasoning(true);
-    } else if (!message.isStreaming && message.reasoning) {
-      setShowReasoning(false);
-    }
-  }, [isReasoningPhase, message.isStreaming, message.reasoning]);
 
   const handleCopy = useCallback(() => {
     void navigator.clipboard.writeText(content).then(() => {
@@ -113,20 +110,14 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
       {/* Content */}
       <div className={`max-w-[80%] flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
-        {/* Reasoning toggle */}
-        {message.reasoning && (
-          <button
-            onClick={() => setShowReasoning(!showReasoning)}
-            className="text-xs text-text-hint hover:text-text-muted flex items-center gap-1 transition"
-          >
-            <svg
-              className={`w-3 h-3 transition-transform ${showReasoning ? 'rotate-90' : ''}`}
-              fill="none" viewBox="0 0 24 24" stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            Thinking...
-          </button>
+        {/* Reasoning badge：默认折叠，思考中有动态指示，结束后可展开看详细过程 */}
+        {(isThinking || message.reasoning) && (
+          <ReasoningBadge
+            isThinking={isThinking}
+            reasoning={message.reasoning}
+            expanded={showReasoning}
+            onToggle={() => setShowReasoning((v) => !v)}
+          />
         )}
 
         {/* Reasoning content */}
@@ -145,8 +136,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Main content */}
-        {(content || message.isStreaming) && (
+        {/* Main content - 只在有正文时渲染气泡；思考/工具阶段由 Thinking 徽章 + 工具卡片承担指示 */}
+        {content && (
           <div
             className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed
               ${isUser
@@ -154,16 +145,12 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                 : 'bg-gray-50 text-text border border-gray-100 rounded-tl-md'
               }`}
           >
-            {content ? (
-              isUser ? (
-                <div className="whitespace-pre-wrap">{content}</div>
-              ) : (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-                </div>
-              )
+            {isUser ? (
+              <div className="whitespace-pre-wrap">{content}</div>
             ) : (
-              <span className="inline-block w-1.5 h-4 bg-primary/60 animate-pulse rounded-sm" />
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+              </div>
             )}
           </div>
         )}
@@ -244,19 +231,74 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   );
 }
 
+function ReasoningBadge({
+  isThinking,
+  reasoning,
+  expanded,
+  onToggle,
+}: {
+  isThinking: boolean;
+  reasoning?: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const canExpand = !!reasoning;
+  return (
+    <button
+      onClick={() => canExpand && onToggle()}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition
+        ${isThinking
+          ? 'bg-amber-50 border-amber-200 text-amber-700'
+          : 'bg-gray-50 border-gray-200 text-text-muted hover:bg-gray-100'}
+        ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
+    >
+      {isThinking ? (
+        <span className="relative flex w-2 h-2 shrink-0">
+          <span className="absolute inset-0 rounded-full bg-amber-400 opacity-60 animate-ping" />
+          <span className="relative rounded-full w-2 h-2 bg-amber-500" />
+        </span>
+      ) : (
+        <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+            d="M12 18v-5.25m0 0a6 6 0 0 0 1.5-.19m-1.5.19a6 6 0 0 1-1.5-.19m3.75 7.5a12 12 0 0 1-4.5 0M14.25 18v-.19c0-.98.66-1.82 1.51-2.32a7.5 7.5 0 1 0-7.52 0c.85.5 1.51 1.34 1.51 2.32V18" />
+        </svg>
+      )}
+      <span>{isThinking ? '思考中' : '已思考'}</span>
+      {isThinking && <ThinkingDots />}
+      {canExpand && (
+        <svg
+          className={`w-3 h-3 ml-0.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex gap-0.5 ml-0.5">
+      <span className="w-1 h-1 rounded-full bg-amber-500 animate-thinking-dot" style={{ animationDelay: '0ms' }} />
+      <span className="w-1 h-1 rounded-full bg-amber-500 animate-thinking-dot" style={{ animationDelay: '160ms' }} />
+      <span className="w-1 h-1 rounded-full bg-amber-500 animate-thinking-dot" style={{ animationDelay: '320ms' }} />
+    </span>
+  );
+}
+
 function ToolCallCard({ toolCall }: { toolCall: ToolCallInfo }) {
   const [expanded, setExpanded] = useState(false);
   const isCalling = toolCall.status === 'calling';
   // name 兜底：在拿到真实工具名前后端会用 plugin_call/tool_call 这种通用占位
   const placeholderName = toolCall.name === 'plugin_call' || toolCall.name === 'tool_call';
   const displayName = placeholderName ? '工具' : toolCall.name;
-  const hasDetail = !!(toolCall.input || toolCall.output);
 
   return (
     <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2 text-xs">
       <button
-        onClick={() => hasDetail && setExpanded(!expanded)}
-        className={`flex items-center gap-2 w-full text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 w-full text-left cursor-pointer"
       >
         {isCalling ? (
           <svg className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
@@ -271,36 +313,38 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCallInfo }) {
         <span className="font-medium text-blue-700 truncate">
           调用 <span className="font-mono">{displayName}</span>{isCalling ? ' 中...' : ''}
         </span>
-        {hasDetail && (
-          <svg
-            className={`w-3 h-3 text-blue-400 ml-auto shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        )}
+        <svg
+          className={`w-3 h-3 text-blue-400 ml-auto shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
       </button>
-      {expanded && hasDetail && (
+      {expanded && (
         <div className="mt-2 bg-white rounded-md border border-blue-100 overflow-hidden">
-          {toolCall.input && (
-            <div className="px-2.5 py-1.5">
-              <div className="text-[10px] uppercase tracking-wider text-blue-500 font-medium mb-1">输入</div>
-              <pre className="whitespace-pre-wrap text-[11px] text-black/70 max-h-40 overflow-auto m-0 font-mono">
-                {formatToolData(toolCall.input)}
-              </pre>
-            </div>
-          )}
-          {toolCall.input && toolCall.output && (
-            <div className="border-t border-dashed border-blue-100" />
-          )}
-          {toolCall.output && (
-            <div className="px-2.5 py-1.5">
-              <div className="text-[10px] uppercase tracking-wider text-green-600 font-medium mb-1">输出</div>
-              <pre className="whitespace-pre-wrap text-[11px] text-black/70 max-h-40 overflow-auto m-0 font-mono">
-                {formatToolData(toolCall.output)}
-              </pre>
-            </div>
-          )}
+          <ToolDataSection label="输入" tone="blue" value={toolCall.input} />
+          <div className="border-t border-dashed border-blue-100" />
+          <ToolDataSection label="输出" tone="green" value={toolCall.output} loading={isCalling} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolDataSection({
+  label, tone, value, loading,
+}: { label: string; tone: 'blue' | 'green'; value?: string; loading?: boolean }) {
+  const labelColor = tone === 'blue' ? 'text-blue-500' : 'text-green-600';
+  return (
+    <div className="px-2.5 py-1.5">
+      <div className={`text-[10px] uppercase tracking-wider font-medium mb-1 ${labelColor}`}>{label}</div>
+      {value ? (
+        <pre className="whitespace-pre-wrap text-[11px] text-black/70 max-h-40 overflow-auto m-0 font-mono">
+          {formatToolData(value)}
+        </pre>
+      ) : (
+        <div className="text-[11px] text-black/30 italic">
+          {loading ? '等待返回...' : '（空）'}
         </div>
       )}
     </div>

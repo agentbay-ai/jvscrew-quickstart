@@ -27,6 +27,7 @@ interface ChatState {
   addMessageTo: (sessionId: string, msg: DisplayMessage) => void;
   setMessagesTo: (sessionId: string, msgs: DisplayMessage[]) => void;
   appendToLastAssistantOf: (sessionId: string, field: 'content' | 'reasoning', text: string) => void;
+  flushContentToReasoningOf: (sessionId: string) => void;
   updateLastAssistantOf: (sessionId: string, partial: Partial<DisplayMessage>) => void;
   addToolCallTo: (sessionId: string, toolCall: ToolCallInfo) => void;
   updateLastToolCallOf: (sessionId: string, partial: Partial<ToolCallInfo>) => void;
@@ -106,6 +107,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...m,
         [field]: (m[field] || '') + text,
       }));
+      return { sessionMessages: { ...s.sessionMessages, [sessionId]: next } };
+    }),
+
+  // 把已有的 content 沉淀到 reasoning：
+  // 一次 Agent 响应可能包含多段 message + 多次 tool_call，只有"最后一段 message"才算正文，
+  // 中间叙述都应折进"思考"面板。在 plugin_call 开始或新 message 段开始时调用。
+  flushContentToReasoningOf: (sessionId) =>
+    set((s) => {
+      const list = s.sessionMessages[sessionId];
+      if (!list) return {};
+      const next = updateLastAssistantInList(list, (m) => {
+        if (!m.content) return m;
+        const sep = m.reasoning ? '\n\n---\n\n' : '';
+        return {
+          ...m,
+          reasoning: (m.reasoning || '') + sep + m.content,
+          content: '',
+        };
+      });
       return { sessionMessages: { ...s.sessionMessages, [sessionId]: next } };
     }),
 

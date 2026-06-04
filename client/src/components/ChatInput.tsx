@@ -73,12 +73,14 @@ export default function ChatInput({
   }, [text]);
 
   const handleSubmit = useCallback(() => {
+    // 流式进行中时不允许发送，按钮已被 Stop 替代，键盘 Enter 也走这里兜底
+    if (isStreaming) return;
     const trimmed = text.trim();
     if (!trimmed && attachedFiles.length === 0) return;
     onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined);
     setText('');
     clearAttachedFiles();
-  }, [text, attachedFiles, onSend, setText, clearAttachedFiles]);
+  }, [isStreaming, text, attachedFiles, onSend, setText, clearAttachedFiles]);
 
   // Slash 命令菜单：检测光标附近的 /<query>
   const [slashState, setSlashState] = useState<{ start: number; query: string; highlight: number } | null>(null);
@@ -284,7 +286,7 @@ export default function ChatInput({
           </div>
         )}
 
-        {/* Text input */}
+        {/* Text input - 流式进行中允许打字（不允许发送，由 Stop 按钮接管） */}
         <div className="px-4 py-3">
           <textarea
             ref={textareaRef}
@@ -297,9 +299,9 @@ export default function ChatInput({
             onPaste={handlePaste}
             onCompositionStart={() => { isComposingRef.current = true; }}
             onCompositionEnd={() => { isComposingRef.current = false; }}
-            placeholder="你想让我做什么"
+            placeholder={isStreaming ? '可以继续输入下一条…当前回复完成或停止后可发送' : '你想让我做什么'}
             rows={1}
-            disabled={disabled}
+            disabled={disabled && !isStreaming}
             className="w-full resize-none text-sm text-text placeholder:text-text-hint
                        focus:outline-none disabled:opacity-50 bg-transparent overflow-y-auto"
             style={{ minHeight: MIN_TEXTAREA_HEIGHT, maxHeight: MAX_TEXTAREA_HEIGHT }}
