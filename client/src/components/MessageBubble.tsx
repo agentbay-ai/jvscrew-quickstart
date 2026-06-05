@@ -263,7 +263,7 @@ function ReasoningBadge({
             d="M12 18v-5.25m0 0a6 6 0 0 0 1.5-.19m-1.5.19a6 6 0 0 1-1.5-.19m3.75 7.5a12 12 0 0 1-4.5 0M14.25 18v-.19c0-.98.66-1.82 1.51-2.32a7.5 7.5 0 1 0-7.52 0c.85.5 1.51 1.34 1.51 2.32V18" />
         </svg>
       )}
-      <span>{isThinking ? '思考中' : '已思考'}</span>
+      <span>{isThinking ? '思考中' : '思考完成'}</span>
       {isThinking && <ThinkingDots />}
       {canExpand && (
         <svg
