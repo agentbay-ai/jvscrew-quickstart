@@ -4,15 +4,29 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useChatStore } from '../stores/chatStore';
 import {
   listSessions,
-  listSessionHistory,
+  listSessionHistoryWithStatus,
   deleteSession,
   stopSession,
 } from '../services/api';
-import type { AuthConfig, DisplayMessage, SessionItem } from '../types/api';
+import type { AuthConfig, DisplayMessage, SessionItem, SessionMessage } from '../types/api';
 
 type RefreshAccessToken = () => Promise<string | null>;
 export interface RefreshSessionsOptions {
   silent?: boolean;
+}
+
+const RECONNECT_POLL_INTERVAL = 30_000;
+
+function historyToDisplayMessages(messages: SessionMessage[]): DisplayMessage[] {
+  return messages
+    .filter((m) => m.Type === 'message' && (m.Role === 'user' || m.Role === 'assistant'))
+    .map((m) => ({
+      id: m.Id,
+      role: m.Role as 'user' | 'assistant',
+      content: m.Content?.map((c) => c.Text).filter(Boolean).join('') || '',
+      timestamp: Date.now(),
+    }))
+    .filter((m) => m.content.trim() !== '');
 }
 
 export async function loadSessionsForConfig(
@@ -95,25 +109,54 @@ export function useSession() {
       }
 
       try {
-        const history = await listSessionHistory(
+        const result = await listSessionHistoryWithStatus(
           token,
           sessionId,
           config.externalUserId,
           config.templateId,
         );
         if (requestId !== loadRequestId.current) return;
-        // Don't overwrite if a stream began on this session while we were loading
         if (useChatStore.getState().isStreamingMap[sessionId]) return;
-        const msgs: DisplayMessage[] = history
-          .filter((m) => m.Type === 'message' && (m.Role === 'user' || m.Role === 'assistant'))
-          .map((m) => ({
-            id: m.Id,
-            role: m.Role as 'user' | 'assistant',
-            content: m.Content?.map((c) => c.Text).filter(Boolean).join('') || '',
-            timestamp: Date.now(),
-          }))
-          .filter((m) => m.content.trim() !== '');
+
+        const msgs = historyToDisplayMessages(result.Messages);
         setMessagesTo(sessionId, msgs);
+
+        if (result.Status === 'running') {
+          const cs = useChatStore.getState();
+          cs.setReconnectingFor(sessionId, true);
+          cs.setStreamingFor(sessionId, true);
+          cs.addMessageTo(sessionId, {
+            id: `system-running-${Date.now()}`,
+            role: 'system',
+            content: 'Agent 任务仍在执行中，正在等待完成...',
+            timestamp: Date.now(),
+          });
+
+          const poll = async () => {
+            if (!useChatStore.getState().isReconnectingMap[sessionId]) return;
+            try {
+              const freshToken = await refreshAccessToken();
+              if (!freshToken) return;
+              const pollResult = await listSessionHistoryWithStatus(
+                freshToken, sessionId, config.externalUserId, config.templateId,
+              );
+              if (!useChatStore.getState().isReconnectingMap[sessionId]) return;
+
+              if (pollResult.Status === 'idle') {
+                const updatedMsgs = historyToDisplayMessages(pollResult.Messages);
+                const store = useChatStore.getState();
+                store.setMessagesTo(sessionId, updatedMsgs);
+                store.setReconnectingFor(sessionId, false);
+                store.setStreamingFor(sessionId, false);
+                return;
+              }
+            } catch {
+              // silently retry
+            }
+            setTimeout(poll, RECONNECT_POLL_INTERVAL);
+          };
+          setTimeout(poll, 3000);
+        }
       } catch {
         // silently fail
       } finally {
