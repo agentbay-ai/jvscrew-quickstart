@@ -57,6 +57,8 @@ export interface SSEEvent {
   CreatedAt?: string;
 }
 
+export type SessionStatus = 'running' | 'idle';
+
 export interface SessionItem {
   Id: string;
   Name: string;
@@ -66,6 +68,17 @@ export interface SessionItem {
   CreatedAt: string;
   UpdatedAt: string;
   Meta: Record<string, unknown>;
+  Status?: SessionStatus;
+}
+
+export interface ListSessionHistoryResponse {
+  Status: SessionStatus;
+  Messages: SessionMessage[];
+}
+
+export interface TaskConflict {
+  pendingText: string;
+  pendingFiles?: UploadedFileInput[];
 }
 
 export interface SessionMessage {

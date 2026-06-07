@@ -29,6 +29,7 @@ interface ChatInputProps {
   disabled?: boolean;
   onStop?: () => void;
   isStreaming?: boolean;
+  isReconnecting?: boolean;
   skills?: SkillItem[];
   includeReasoning?: boolean;
   includeToolCalls?: boolean;
@@ -38,7 +39,7 @@ interface ChatInputProps {
 }
 
 export default function ChatInput({
-  onSend, disabled, onStop, isStreaming, skills,
+  onSend, disabled, onStop, isStreaming, isReconnecting, skills,
   includeReasoning, includeToolCalls, onToggleReasoning, onToggleToolCalls,
   isDragOver,
 }: ChatInputProps) {
@@ -479,7 +480,7 @@ export default function ChatInput({
           </div>
 
           <div className="flex items-center gap-2">
-            {isStreaming ? (
+            {(isStreaming || isReconnecting) ? (
               <button
                 onClick={onStop}
                 className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-medium

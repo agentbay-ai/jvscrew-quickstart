@@ -29,6 +29,7 @@ export interface ChatSSEOptions {
   signal?: AbortSignal;
   onEvent: (event: SSEEvent) => void;
   onError: (error: Error) => void;
+  onHttpError?: (status: number, body: string) => void;
   onDone: () => void;
 }
 
@@ -46,6 +47,7 @@ export async function startChatSSE(options: ChatSSEOptions) {
     signal,
     onEvent,
     onError,
+    onHttpError,
     onDone,
   } = options;
 
@@ -100,6 +102,10 @@ export async function startChatSSE(options: ChatSSEOptions) {
     if (!response.ok) {
       const errBody = await response.text();
       console.error('[SSE] error response:', errBody);
+      if (response.status === 409 && onHttpError) {
+        onHttpError(409, errBody);
+        return;
+      }
       throw new Error(`Chat request failed: ${response.status} - ${errBody}`);
     }
 
@@ -147,7 +153,9 @@ export async function startChatSSE(options: ChatSSEOptions) {
       onDone();
     } else {
       console.error('[SSE] error:', err);
-      onError(err instanceof Error ? err : new Error(String(err)));
+      const error = err instanceof Error ? err : new Error(String(err));
+      (error as Error & { isDisconnect?: boolean }).isDisconnect = true;
+      onError(error);
     }
   }
 }

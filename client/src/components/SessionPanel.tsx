@@ -164,6 +164,12 @@ export default function SessionPanel({ onNewChat, onOpenTasks, onOpenFiles }: Se
                     onClick={() => loadHistory(session.SessionId)}
                     className="min-w-0 flex-1 text-left flex items-center gap-1.5"
                   >
+                    {session.Status === 'running' && (
+                      <span className="relative shrink-0 flex h-2 w-2" title="任务执行中">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                    )}
                     <span className="min-w-0 truncate">{session.Name || session.SessionId}</span>
                     {isScheduledTaskSession(session.SessionId) && (
                       <span

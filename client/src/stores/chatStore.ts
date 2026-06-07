@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DisplayMessage, ToolCallInfo } from '../types/api';
+import type { DisplayMessage, TaskConflict, ToolCallInfo } from '../types/api';
 
 export interface PendingFile {
   id: string;
@@ -12,6 +12,8 @@ interface ChatState {
   sessionMessages: Record<string, DisplayMessage[]>;
   currentSessionId: string | null;
   isStreamingMap: Record<string, true>;
+  isReconnectingMap: Record<string, true>;
+  taskConflictMap: Record<string, TaskConflict>;
   abortControllers: Record<string, AbortController>;
   isLoadingHistory: boolean;
   pendingFiles: PendingFile[];
@@ -34,6 +36,8 @@ interface ChatState {
   updateToolCallByCallId: (sessionId: string, callId: string, partial: Partial<ToolCallInfo>) => void;
   finalizeAllToolCallsOf: (sessionId: string) => void;
   setStreamingFor: (sessionId: string, streaming: boolean) => void;
+  setReconnectingFor: (sessionId: string, reconnecting: boolean) => void;
+  setTaskConflict: (sessionId: string, conflict: TaskConflict | null) => void;
   setAbortControllerFor: (sessionId: string, ctrl: AbortController | null) => void;
   renameSession: (oldId: string, newId: string) => void;
   removeSessionMessages: (sessionId: string) => void;
@@ -75,6 +79,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionMessages: {},
   currentSessionId: null,
   isStreamingMap: {},
+  isReconnectingMap: {},
+  taskConflictMap: {},
   abortControllers: {},
   isLoadingHistory: false,
   pendingFiles: [],
@@ -219,6 +225,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { isStreamingMap: next };
     }),
 
+  setReconnectingFor: (sessionId, reconnecting) =>
+    set((s) => {
+      if (reconnecting) {
+        if (s.isReconnectingMap[sessionId]) return {};
+        return { isReconnectingMap: { ...s.isReconnectingMap, [sessionId]: true } };
+      }
+      if (!s.isReconnectingMap[sessionId]) return {};
+      const next = { ...s.isReconnectingMap };
+      delete next[sessionId];
+      return { isReconnectingMap: next };
+    }),
+
+  setTaskConflict: (sessionId, conflict) =>
+    set((s) => {
+      const next = { ...s.taskConflictMap };
+      if (conflict) {
+        next[sessionId] = conflict;
+      } else {
+        delete next[sessionId];
+      }
+      return { taskConflictMap: next };
+    }),
+
   setAbortControllerFor: (sessionId, ctrl) =>
     set((s) => {
       const next = { ...s.abortControllers };
@@ -255,13 +284,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete sessionMessages[sessionId];
       const isStreamingMap = { ...s.isStreamingMap };
       delete isStreamingMap[sessionId];
+      const isReconnectingMap = { ...s.isReconnectingMap };
+      delete isReconnectingMap[sessionId];
+      const taskConflictMap = { ...s.taskConflictMap };
+      delete taskConflictMap[sessionId];
       const abortControllers = { ...s.abortControllers };
       const ctrl = abortControllers[sessionId];
       if (ctrl) {
         try { ctrl.abort(); } catch { /* ignore */ }
         delete abortControllers[sessionId];
       }
-      return { sessionMessages, isStreamingMap, abortControllers };
+      return { sessionMessages, isStreamingMap, isReconnectingMap, taskConflictMap, abortControllers };
     }),
 
   addMessage: (msg) => {
@@ -289,6 +322,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sessionMessages: {},
     currentSessionId: null,
     isStreamingMap: {},
+    isReconnectingMap: {},
+    taskConflictMap: {},
     abortControllers: {},
     pendingFiles: [],
     attachedFiles: [],

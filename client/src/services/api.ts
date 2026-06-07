@@ -4,12 +4,14 @@ import type {
   AuthConfig,
   DeleteAgentEnvVarResponse,
   GetAgentEnvVarResponse,
+  ListSessionHistoryResponse,
   ListSkillPreferencesResponse,
   ListSkillsResponse,
   ListTemplatesResponse,
   ListUserSkillsResponse,
   SessionItem,
   SessionMessage,
+  SessionStatus,
   SetAgentEnvVarResponse,
   SetSkillPreferenceResponse,
   SkillPreference,
@@ -138,6 +140,20 @@ export async function listSessionHistory(
   const res = await jwtFetch('ListSessionHistory', { SessionId: sessionId, ExternalUserId: externalUserId }, token, templateId);
   const data = await res.json();
   return data.Messages ?? [];
+}
+
+export async function listSessionHistoryWithStatus(
+  token: string,
+  sessionId: string,
+  externalUserId: string,
+  templateId?: string,
+): Promise<ListSessionHistoryResponse> {
+  const res = await jwtFetch('ListSessionHistory', { SessionId: sessionId, ExternalUserId: externalUserId }, token, templateId);
+  const data = await res.json();
+  return {
+    Status: (data.Status as SessionStatus) ?? 'idle',
+    Messages: data.Messages ?? [],
+  };
 }
 
 export async function stopSession(

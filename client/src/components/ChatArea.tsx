@@ -43,7 +43,10 @@ function downloadPendingFile(file: PendingFile) {
 }
 
 export default function ChatArea() {
-  const { messages, isStreaming, currentSessionId, sendMessage, stopChat } = useChat();
+  const {
+    messages, isStreaming, isReconnecting, taskConflict, currentSessionId,
+    sendMessage, stopChat, waitForTaskCompletion, stopAndResend, dismissConflict,
+  } = useChat();
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
   const pendingFiles = useChatStore((s) => s.pendingFiles);
   const removePendingFile = useChatStore((s) => s.removePendingFile);
@@ -225,6 +228,7 @@ export default function ChatArea() {
               onSend={handleSend}
               disabled={isStreaming || isUploading}
               isStreaming={isStreaming}
+              isReconnecting={isReconnecting}
               onStop={stopChat}
               skills={skills}
               includeReasoning={includeReasoning}
@@ -287,6 +291,64 @@ export default function ChatArea() {
                     </div>
                   </div>
                 ))}
+
+                {/* 断连重连中提示 */}
+                {isReconnecting && (
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-sm font-medium bg-amber-100 text-amber-600">
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    </div>
+                    <div className="rounded-2xl px-4 py-3 bg-amber-50 border border-amber-200 rounded-tl-md">
+                      <div className="text-sm text-amber-800 font-medium">连接已断开，Agent 仍在执行中</div>
+                      <div className="text-xs text-amber-600 mt-1">正在轮询任务状态，等待完成后自动恢复结果...</div>
+                      <button
+                        onClick={stopChat}
+                        className="mt-2 px-3 py-1 rounded-lg bg-amber-100 text-amber-700 text-xs font-medium hover:bg-amber-200 transition"
+                      >
+                        中止任务
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* HTTP 409 任务冲突提示 */}
+                {taskConflict && (
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-sm font-medium bg-blue-100 text-blue-600">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                    <div className="rounded-2xl px-4 py-3 bg-blue-50 border border-blue-200 rounded-tl-md">
+                      <div className="text-sm text-blue-800 font-medium">当前会话有任务正在执行</div>
+                      <div className="text-xs text-blue-600 mt-1">请等待当前任务完成，或中止后重新发送</div>
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={waitForTaskCompletion}
+                          className="px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200 transition"
+                        >
+                          等待完成
+                        </button>
+                        <button
+                          onClick={stopAndResend}
+                          className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-medium hover:bg-red-100 transition"
+                        >
+                          中止并重发
+                        </button>
+                        <button
+                          onClick={dismissConflict}
+                          className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-medium hover:bg-gray-200 transition"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -307,6 +369,7 @@ export default function ChatArea() {
               onSend={handleSend}
               disabled={isStreaming || isUploading}
               isStreaming={isStreaming}
+              isReconnecting={isReconnecting}
               onStop={stopChat}
               skills={skills}
               includeReasoning={includeReasoning}

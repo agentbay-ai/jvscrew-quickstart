@@ -4,8 +4,8 @@ import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSandboxStore } from '../stores/sandboxStore';
 import { startChatSSE } from '../services/sse';
-import { stopSession } from '../services/api';
-import type { SSEEvent, DisplayMessage, ToolCallInfo, UploadedFileInput } from '../types/api';
+import { stopSession, listSessionHistoryWithStatus } from '../services/api';
+import type { SSEEvent, DisplayMessage, ToolCallInfo, UploadedFileInput, SessionMessage } from '../types/api';
 
 // Object=message + plugin_call/plugin_call_output 时 Content[0].Data 的形状
 type ToolPayload = {
@@ -88,6 +88,20 @@ function sessionNameFromMessage(text: string, files?: UploadedFileInput[]): stri
   const fileNames = files?.map((file) => file.name).filter(Boolean).join(', ');
   return sessionNameFromText(fileNames || '');
 }
+
+function historyToDisplayMessages(messages: SessionMessage[]): DisplayMessage[] {
+  return messages
+    .filter((m) => m.Type === 'message' && (m.Role === 'user' || m.Role === 'assistant'))
+    .map((m) => ({
+      id: m.Id,
+      role: m.Role as 'user' | 'assistant',
+      content: m.Content?.map((c) => c.Text).filter(Boolean).join('') || '',
+      timestamp: Date.now(),
+    }))
+    .filter((m) => m.content.trim() !== '');
+}
+
+const RECONNECT_POLL_INTERVAL = 30_000;
 
 export function useChat() {
   const { config, refreshAccessToken } = useAuthStore();
@@ -387,12 +401,73 @@ export function useChat() {
           }
         },
 
+        onHttpError: (status, body) => {
+          if (status === 409) {
+            console.log('[chat] HTTP 409 TaskInProgress for session:', activeSessionId);
+            const s = useChatStore.getState();
+            s.updateLastAssistantOf(activeSessionId, {
+              content: '',
+              isStreaming: false,
+            });
+            s.setStreamingFor(activeSessionId, false);
+            s.setAbortControllerFor(activeSessionId, null);
+            s.setTaskConflict(activeSessionId, {
+              pendingText: text,
+              pendingFiles: files,
+            });
+          } else {
+            useChatStore.getState().updateLastAssistantOf(activeSessionId, {
+              content: `Error: ${status} - ${body}`,
+              isStreaming: false,
+            });
+            finishStreaming();
+          }
+        },
+
         onError: (err) => {
-          useChatStore.getState().updateLastAssistantOf(activeSessionId, {
-            content: `Connection error: ${err.message}`,
-            isStreaming: false,
-          });
-          finishStreaming();
+          const isDisconnect = (err as Error & { isDisconnect?: boolean }).isDisconnect;
+          if (isDisconnect && config) {
+            console.log('[chat] SSE disconnected, starting reconnect polling for:', activeSessionId);
+            const s = useChatStore.getState();
+            s.setReconnectingFor(activeSessionId, true);
+            s.updateLastAssistantOf(activeSessionId, {
+              content: '连接已断开，Agent 仍在执行中，正在等待结果...',
+              isStreaming: true,
+            });
+            s.setAbortControllerFor(activeSessionId, null);
+
+            const pollSessionId = activeSessionId;
+            const poll = async () => {
+              if (!useChatStore.getState().isReconnectingMap[pollSessionId]) return;
+              try {
+                const freshToken = await refreshAccessToken();
+                if (!freshToken) return;
+                const result = await listSessionHistoryWithStatus(
+                  freshToken, pollSessionId, config.externalUserId, config.templateId,
+                );
+                if (!useChatStore.getState().isReconnectingMap[pollSessionId]) return;
+
+                if (result.Status === 'idle') {
+                  const displayMsgs = historyToDisplayMessages(result.Messages);
+                  const cs = useChatStore.getState();
+                  cs.setMessagesTo(pollSessionId, displayMsgs);
+                  cs.setReconnectingFor(pollSessionId, false);
+                  cs.setStreamingFor(pollSessionId, false);
+                  return;
+                }
+              } catch (pollErr) {
+                console.warn('[chat] reconnect poll error:', pollErr);
+              }
+              setTimeout(poll, RECONNECT_POLL_INTERVAL);
+            };
+            setTimeout(poll, 3000);
+          } else {
+            useChatStore.getState().updateLastAssistantOf(activeSessionId, {
+              content: `Connection error: ${err.message}`,
+              isStreaming: false,
+            });
+            finishStreaming();
+          }
         },
 
         onDone: () => {
@@ -418,21 +493,99 @@ export function useChat() {
     [config, refreshAccessToken, setSessionId, upsertSession],
   );
 
+  const isReconnecting = useChatStore((s) =>
+    s.currentSessionId ? !!s.isReconnectingMap[s.currentSessionId] : false,
+  );
+  const taskConflict = useChatStore((s) =>
+    s.currentSessionId ? s.taskConflictMap[s.currentSessionId] ?? null : null,
+  );
+
+  const waitForTaskCompletion = useCallback(async () => {
+    if (!config) return;
+    const s = useChatStore.getState();
+    const id = s.currentSessionId;
+    if (!id) return;
+
+    s.setTaskConflict(id, null);
+    s.setReconnectingFor(id, true);
+    s.setStreamingFor(id, true);
+
+    const systemMsg: DisplayMessage = {
+      id: `system-wait-${Date.now()}`,
+      role: 'system',
+      content: '正在等待当前任务完成...',
+      timestamp: Date.now(),
+    };
+    s.addMessageTo(id, systemMsg);
+
+    const poll = async () => {
+      if (!useChatStore.getState().isReconnectingMap[id]) return;
+      try {
+        const token = await refreshAccessToken();
+        if (!token) return;
+        const result = await listSessionHistoryWithStatus(
+          token, id, config.externalUserId, config.templateId,
+        );
+        if (!useChatStore.getState().isReconnectingMap[id]) return;
+
+        if (result.Status === 'idle') {
+          const displayMsgs = historyToDisplayMessages(result.Messages);
+          const cs = useChatStore.getState();
+          cs.setMessagesTo(id, displayMsgs);
+          cs.setReconnectingFor(id, false);
+          cs.setStreamingFor(id, false);
+          return;
+        }
+      } catch (pollErr) {
+        console.warn('[chat] conflict poll error:', pollErr);
+      }
+      setTimeout(poll, RECONNECT_POLL_INTERVAL);
+    };
+    setTimeout(poll, 3000);
+  }, [config, refreshAccessToken]);
+
+  const stopAndResend = useCallback(async () => {
+    if (!config) return;
+    const s = useChatStore.getState();
+    const id = s.currentSessionId;
+    if (!id) return;
+
+    const conflict = s.taskConflictMap[id];
+    s.setTaskConflict(id, null);
+
+    try {
+      const token = await refreshAccessToken();
+      if (token) await stopSession(token, id, config.templateId);
+    } catch (err) {
+      console.warn('[chat] stopSession for resend failed:', err);
+    }
+
+    if (conflict) {
+      sendMessage(conflict.pendingText, conflict.pendingFiles);
+    }
+  }, [config, refreshAccessToken, sendMessage]);
+
+  const dismissConflict = useCallback(() => {
+    const s = useChatStore.getState();
+    const id = s.currentSessionId;
+    if (!id) return;
+    s.setTaskConflict(id, null);
+  }, []);
+
   const stopChat = useCallback(async () => {
     const s = useChatStore.getState();
     const id = s.currentSessionId;
     if (!id) return;
 
-    // 1. 先中止本地 SSE 流，立即释放 UI（不等服务端返回）
     const ctrl = s.abortControllers[id];
     ctrl?.abort();
     s.finalizeAllToolCallsOf(id);
     s.updateLastAssistantOf(id, { isStreaming: false });
     s.setStreamingFor(id, false);
+    s.setReconnectingFor(id, false);
+    s.setTaskConflict(id, null);
     s.setAbortControllerFor(id, null);
 
-    // 2. 通知服务端真正中止 Agent 任务，避免后端继续推理消耗 token
-    //    服务端无运行中任务会返回 Stopped:false，属正常情况；失败不向用户报错
     if (!config) return;
     try {
       const token = await refreshAccessToken();
@@ -450,9 +603,14 @@ export function useChat() {
   return {
     messages,
     isStreaming,
+    isReconnecting,
+    taskConflict,
     currentSessionId,
     sendMessage,
     stopChat,
     newChat,
+    waitForTaskCompletion,
+    stopAndResend,
+    dismissConflict,
   };
 }
